@@ -1,0 +1,2753 @@
+SILKBOUND: САД ПОСЛЕ ДОЖДЯ
+
+Спецификация первого playable-прототипа
+
+Версия: 0.1
+Тип документа: техническая спецификация реализации
+Цель сборки: доказать жизнеспособность управления, движения и физической паутины
+Платформа: мобильный веб, PWA
+Язык: TypeScript
+Ориентация: горизонтальная
+Целевая длительность прототипа: 5–10 минут игрового процесса
+Целевая частота кадров: 60 FPS на среднем мобильном устройстве, не менее 30 FPS на слабом
+
+---
+
+1. Цель прототипа
+
+Прототип должен доказать три главных положения:
+
+1. Пауком приятно управлять на сенсорном экране.
+2. Раскачивание на паутине ощущается естественно и предсказуемо.
+3. Физические нити можно использовать для самостоятельного решения простой задачи.
+
+Прототип не должен доказывать качество сюжета, финальной графики или количество контента.
+
+Основная проверяемая игровая фантазия:
+
+«Игрок видит разрыв, самостоятельно выпускает нить, раскачивается, строит конструкцию и переносит предмет туда, куда обычным прыжком добраться невозможно.»
+
+---
+
+2. Границы прототипа
+
+2.1. Что входит
+
+В прототип входят:
+
+- одна тестовая сцена;
+- управление с сенсорного экрана;
+- управление с клавиатуры для разработки;
+- движение по полу;
+- движение по стенам;
+- движение по потолку;
+- переход через углы;
+- прыжок;
+- управление в воздухе;
+- автоматическое прилипание к поверхности;
+- выпуск паутины;
+- прицеливание;
+- раскачивание;
+- сокращение и увеличение длины активной нити;
+- отпускание нити;
+- крепление нити к статической поверхности;
+- крепление нити к динамическому объекту;
+- соединение двух объектов;
+- натяжение;
+- визуальное предупреждение о разрыве;
+- разрыв нити;
+- удаление нити;
+- один переносимый предмет;
+- один груз;
+- один простой механизм;
+- контрольная точка;
+- перезапуск комнаты;
+- меню паузы;
+- базовые настройки;
+- отладочный интерфейс;
+- установка как PWA;
+- локальное сохранение настроек.
+
+2.2. Что не входит
+
+В прототип не входят:
+
+- сюжет;
+- диалоги;
+- полноценные персонажи;
+- противники;
+- вибрационная сеть;
+- музыкальные нити;
+- разные типы паутины;
+- капли воды;
+- ветер;
+- карта;
+- хаб;
+- коллекционные предметы;
+- процедурная анимация восьми ног;
+- финальная графика;
+- облачные сохранения;
+- аналитика;
+- локализация на несколько языков;
+- ежедневные испытания;
+- редактор уровней для конечного пользователя.
+
+---
+
+3. Критерий успешности
+
+Прототип считается успешным, если новый игрок без устного объяснения способен:
+
+1. Начать движение.
+2. Забраться на стену.
+3. Перейти на потолок.
+4. Перепрыгнуть небольшой разрыв.
+5. Выпустить нить.
+6. Раскачаться через большую пропасть.
+7. Прикрепить нить к ящику.
+8. Перетащить ящик или использовать его в механизме.
+9. Добраться до выхода.
+
+Дополнительные критерии:
+
+- управление не требует более трёх основных виртуальных элементов;
+- игрок понимает, когда нить скоро порвётся;
+- после падения возврат занимает не более двух секунд;
+- прототип выдерживает не менее 40 активных нитей;
+- физика не разрушается после сворачивания приложения;
+- комната полностью перезапускается без перезагрузки страницы;
+- игрок может пройти задачу минимум двумя способами.
+
+---
+
+4. Игровая последовательность
+
+Прототип состоит из одной комнаты, условно разделённой на пять зон.
+
+Зона 1. Движение
+
+Игрок появляется на горизонтальной платформе.
+
+Задачи:
+
+- пройти вправо;
+- подняться по стене;
+- перейти на потолок;
+- спуститься на следующую платформу.
+
+Визуальные подсказки:
+
+- мягкая линия направления;
+- следы на поверхности;
+- анимация точки назначения.
+
+Текстовая подсказка:
+
+«Двигайтесь по любой поверхности.»
+
+Зона 2. Прыжок
+
+Небольшой разрыв между платформами.
+
+Игрок должен:
+
+- разбежаться;
+- прыгнуть;
+- приземлиться на противоположной стороне.
+
+Здесь проверяются:
+
+- coyote time;
+- jump buffer;
+- воздушное управление;
+- автоматическое прилипание.
+
+Зона 3. Раскачивание
+
+Большая пропасть, которую нельзя перепрыгнуть напрямую.
+
+Над пропастью расположены три точки крепления.
+
+Игрок должен:
+
+- зацепиться;
+- раскачаться;
+- отпустить нить;
+- долететь до противоположной стороны.
+
+Допускаются решения:
+
+- одна длинная дуга;
+- переход между двумя нитями;
+- подтягивание по нити;
+- движение по самостоятельно созданной сетке.
+
+Зона 4. Физическая задача
+
+Перед выходом находится закрытая дверь.
+
+Рядом расположены:
+
+- лёгкий ящик;
+- подвешенный груз;
+- напольная кнопка;
+- две точки крепления;
+- небольшая верхняя платформа.
+
+Дверь открывается, если кнопка удерживается достаточным весом.
+
+Возможные решения:
+
+Решение A
+
+Перетащить ящик на кнопку.
+
+Решение B
+
+Связать подвешенный груз и опустить его на кнопку.
+
+Решение C
+
+Создать натянутую сеть и использовать её как направляющую для ящика.
+
+Решение D
+
+Подвесить ящик над кнопкой и разрезать удерживающую нить.
+
+Зона 5. Завершение
+
+За дверью находится светящаяся точка выхода.
+
+При входе:
+
+- управление блокируется;
+- появляется сообщение об успешном завершении;
+- показываются статистические данные;
+- доступен повторный запуск.
+
+---
+
+5. Схема управления
+
+5.1. Сенсорное управление
+
+Левая половина экрана
+
+Плавающий виртуальный стик.
+
+Функции:
+
+- движение по поверхности;
+- воздушное управление;
+- раскачивание;
+- сокращение или увеличение активной нити.
+
+Правая нижняя область
+
+Кнопка прыжка.
+
+Действия:
+
+- нажатие — прыжок;
+- удержание — увеличение высоты;
+- отпускание — сокращение восходящей фазы.
+
+Правая центральная область
+
+Кнопка паутины.
+
+Действия:
+
+- короткое нажатие — быстрый выпуск;
+- удержание — режим прицеливания;
+- отпускание — создание нити;
+- повторное нажатие при активной нити — выбор действия в зависимости от состояния.
+
+Дополнительная кнопка
+
+Маленькая кнопка разрезания появляется только рядом с доступной нитью.
+
+5.2. Клавиатура
+
+A / D или стрелки — движение
+W / S — сокращение и увеличение нити
+Space — прыжок
+E — паутина
+Q — разрезать ближайшую нить
+R — перезапуск контрольной точки
+Escape — пауза
+F1 — debug overlay
+
+5.3. Мышь
+
+- удержание правой кнопки — прицеливание;
+- отпускание — выпуск;
+- левая кнопка — выбор нити в debug-режиме.
+
+---
+
+6. Начальные параметры управления
+
+Все значения должны находиться в отдельном конфигурационном файле.
+
+export interface SpiderMovementConfig {
+  surfaceMaxSpeed: number;
+  surfaceAcceleration: number;
+  surfaceDeceleration: number;
+
+  airMaxSpeed: number;
+  airAcceleration: number;
+
+  jumpVelocity: number;
+  jumpHoldDurationMs: number;
+  jumpReleaseMultiplier: number;
+
+  gravity: number;
+  maxFallSpeed: number;
+
+  coyoteTimeMs: number;
+  jumpBufferMs: number;
+
+  surfaceSnapDistance: number;
+  surfaceDetachDistance: number;
+  maxAttachSpeed: number;
+
+  cornerSearchRadius: number;
+  cornerTransitionDurationMs: number;
+}
+
+Начальная конфигурация:
+
+export const spiderMovementConfig: SpiderMovementConfig = {
+  surfaceMaxSpeed: 270,
+  surfaceAcceleration: 1900,
+  surfaceDeceleration: 2300,
+
+  airMaxSpeed: 230,
+  airAcceleration: 900,
+
+  jumpVelocity: 520,
+  jumpHoldDurationMs: 180,
+  jumpReleaseMultiplier: 0.48,
+
+  gravity: 1750,
+  maxFallSpeed: 920,
+
+  coyoteTimeMs: 100,
+  jumpBufferMs: 130,
+
+  surfaceSnapDistance: 24,
+  surfaceDetachDistance: 32,
+  maxAttachSpeed: 620,
+
+  cornerSearchRadius: 34,
+  cornerTransitionDurationMs: 110
+};
+
+---
+
+7. Технологический стек
+
+Обязательные технологии
+
+- TypeScript;
+- Phaser;
+- Matter.js;
+- Vite;
+- IndexedDB;
+- Web Audio API;
+- Pointer Events;
+- Service Worker;
+- Web App Manifest.
+
+Дополнительные библиотеки
+
+Допустимы:
+
+- Zod для валидации JSON;
+- Vitest для unit-тестов;
+- Playwright для браузерных тестов;
+- ESLint;
+- Prettier;
+- Husky;
+- simple-git-hooks.
+
+Не рекомендуется добавлять React, Vue или другую UI-библиотеку только ради игрового HUD. Интерфейс прототипа можно реализовать средствами Phaser или минимальным HTML-слоем.
+
+---
+
+8. Структура репозитория
+
+silkbound/
+  public/
+    manifest.webmanifest
+    icons/
+    static/
+
+  src/
+    main.ts
+
+    app/
+      GameApp.ts
+      GameConfig.ts
+      RuntimeEnvironment.ts
+
+    core/
+      events/
+        EventBus.ts
+        GameEvents.ts
+
+      math/
+        Vector2.ts
+        Geometry.ts
+        Interpolation.ts
+
+      time/
+        FixedStepRunner.ts
+        GameClock.ts
+
+      debug/
+        DebugOverlay.ts
+        DebugSettings.ts
+
+      storage/
+        IndexedDbStorage.ts
+        StorageTypes.ts
+
+    game/
+      scenes/
+        BootScene.ts
+        PreloadScene.ts
+        PrototypeScene.ts
+        PauseScene.ts
+        ResultsScene.ts
+
+      input/
+        InputSystem.ts
+        InputFrame.ts
+        TouchInputAdapter.ts
+        KeyboardInputAdapter.ts
+        GamepadInputAdapter.ts
+        VirtualJoystick.ts
+        TouchButton.ts
+
+      spider/
+        Spider.ts
+        SpiderController.ts
+        SpiderStateMachine.ts
+        SpiderState.ts
+        SpiderMovement.ts
+        SpiderSurfaceSensor.ts
+        SpiderWebController.ts
+        SpiderVisual.ts
+
+      physics/
+        MatterWorldAdapter.ts
+        CollisionCategories.ts
+        PhysicsMaterials.ts
+
+      web/
+        WebSystem.ts
+        WebGraph.ts
+        WebNode.ts
+        WebStrand.ts
+        WebParticle.ts
+        WebSolver.ts
+        WebRenderer.ts
+        WebCollisionSystem.ts
+        WebAttachmentSystem.ts
+        WebSelectionSystem.ts
+        WebSerializer.ts
+        WebConfig.ts
+
+      objects/
+        DynamicCrate.ts
+        HangingWeight.ts
+        PressurePlate.ts
+        PrototypeDoor.ts
+        Checkpoint.ts
+        ExitTrigger.ts
+
+      camera/
+        CameraController.ts
+        CameraZone.ts
+
+      ui/
+        PrototypeHud.ts
+        PauseMenu.ts
+        ResultsPanel.ts
+        WebLimitIndicator.ts
+        InteractionPrompt.ts
+
+      level/
+        PrototypeLevelLoader.ts
+        LevelSchema.ts
+        LevelValidator.ts
+        LevelObjectFactory.ts
+
+      save/
+        SettingsRepository.ts
+        PrototypeProgressRepository.ts
+
+    content/
+      levels/
+        prototype-room.json
+
+      config/
+        spider.json
+        web.json
+        camera.json
+        input.json
+
+    assets/
+      sprites/
+      textures/
+      audio/
+
+  tests/
+    unit/
+    integration/
+    browser/
+    performance/
+
+  vite.config.ts
+  tsconfig.json
+  package.json
+
+---
+
+9. Главные классы
+
+9.1. GameApp
+
+Ответственность:
+
+- создание Phaser.Game;
+- настройка размера;
+- регистрация сцен;
+- обработка жизненного цикла страницы;
+- глобальная пауза;
+- инициализация хранилища.
+
+export class GameApp {
+  private game: Phaser.Game;
+  private storage: IndexedDbStorage;
+
+  constructor(config: GameAppConfig) {}
+
+  async start(): Promise<void> {}
+
+  pauseFromSystem(): void {}
+
+  resumeFromSystem(): void {}
+
+  destroy(): void {}
+}
+
+---
+
+9.2. PrototypeScene
+
+Ответственность:
+
+- загрузка определения комнаты;
+- создание систем;
+- создание объектов;
+- координация порядка обновления;
+- перезапуск комнаты;
+- завершение прототипа.
+
+export class PrototypeScene extends Phaser.Scene {
+  private inputSystem!: InputSystem;
+  private spider!: Spider;
+  private webSystem!: WebSystem;
+  private cameraController!: CameraController;
+  private levelRuntime!: PrototypeLevelRuntime;
+
+  create(): void {}
+
+  fixedUpdate(deltaSeconds: number): void {}
+
+  update(time: number, deltaMs: number): void {}
+
+  restartFromCheckpoint(): void {}
+
+  completePrototype(): void {}
+}
+
+Сцена не должна содержать подробную физическую логику героя или паутины.
+
+---
+
+9.3. InputSystem
+
+Объединяет все источники ввода.
+
+export interface InputFrame {
+  move: {
+    x: number;
+    y: number;
+  };
+
+  aim: {
+    x: number;
+    y: number;
+  };
+
+  jumpPressed: boolean;
+  jumpHeld: boolean;
+  jumpReleased: boolean;
+
+  webPressed: boolean;
+  webHeld: boolean;
+  webReleased: boolean;
+
+  cutPressed: boolean;
+  restartPressed: boolean;
+  pausePressed: boolean;
+
+  pointerWorldPosition?: {
+    x: number;
+    y: number;
+  };
+}
+
+export class InputSystem {
+  private adapters: InputAdapter[];
+
+  update(): void {}
+
+  getFrame(): Readonly<InputFrame> {}
+
+  resetTransientActions(): void {}
+
+  setEnabled(enabled: boolean): void {}
+}
+
+---
+
+9.4. Spider
+
+Содержит ссылки на основные части героя.
+
+export class Spider {
+  readonly body: MatterJS.BodyType;
+  readonly controller: SpiderController;
+  readonly surfaceSensor: SpiderSurfaceSensor;
+  readonly webController: SpiderWebController;
+  readonly visual: SpiderVisual;
+
+  setPosition(x: number, y: number): void {}
+
+  setEnabled(enabled: boolean): void {}
+
+  reset(state: SpiderResetState): void {}
+}
+
+---
+
+9.5. SpiderController
+
+Ответственность:
+
+- состояния;
+- движение;
+- прыжок;
+- сцепление;
+- переход между поверхностями;
+- передача команд системе паутины.
+
+export class SpiderController {
+  private stateMachine: SpiderStateMachine;
+  private movement: SpiderMovement;
+
+  fixedUpdate(
+    input: Readonly<InputFrame>,
+    deltaSeconds: number
+  ): void {}
+
+  getState(): SpiderState {}
+
+  stun(durationMs: number): void {}
+
+  respawn(position: Vector2): void {}
+}
+
+---
+
+9.6. SpiderSurfaceSensor
+
+Определяет ближайшую доступную поверхность.
+
+export interface SurfaceContact {
+  point: Vector2;
+  normal: Vector2;
+  tangent: Vector2;
+  distance: number;
+
+  bodyId: number;
+  materialId: string;
+
+  walkable: boolean;
+  webAttachable: boolean;
+}
+
+export class SpiderSurfaceSensor {
+  scan(position: Vector2, preferredDirection: Vector2): SurfaceScanResult {}
+
+  findCornerTransition(
+    current: SurfaceContact,
+    movementDirection: Vector2
+  ): SurfaceContact | null {}
+
+  canAttach(
+    contact: SurfaceContact,
+    velocity: Vector2
+  ): boolean {}
+}
+
+---
+
+9.7. SpiderStateMachine
+
+export enum SpiderState {
+  SurfaceIdle = "surface-idle",
+  SurfaceMove = "surface-move",
+  Airborne = "airborne",
+  SurfaceAttach = "surface-attach",
+  WebAim = "web-aim",
+  Tethered = "tethered",
+  Stunned = "stunned",
+  Respawning = "respawning",
+  Disabled = "disabled"
+}
+
+Допустимые переходы должны быть перечислены явно.
+
+const allowedTransitions: Record<SpiderState, SpiderState[]> = {
+  [SpiderState.SurfaceIdle]: [
+    SpiderState.SurfaceMove,
+    SpiderState.Airborne,
+    SpiderState.WebAim,
+    SpiderState.Disabled
+  ],
+
+  [SpiderState.SurfaceMove]: [
+    SpiderState.SurfaceIdle,
+    SpiderState.Airborne,
+    SpiderState.WebAim,
+    SpiderState.Disabled
+  ],
+
+  [SpiderState.Airborne]: [
+    SpiderState.SurfaceAttach,
+    SpiderState.WebAim,
+    SpiderState.Tethered,
+    SpiderState.Stunned,
+    SpiderState.Respawning
+  ],
+
+  [SpiderState.SurfaceAttach]: [
+    SpiderState.SurfaceIdle,
+    SpiderState.SurfaceMove
+  ],
+
+  [SpiderState.WebAim]: [
+    SpiderState.SurfaceIdle,
+    SpiderState.SurfaceMove,
+    SpiderState.Airborne,
+    SpiderState.Tethered
+  ],
+
+  [SpiderState.Tethered]: [
+    SpiderState.Airborne,
+    SpiderState.SurfaceAttach,
+    SpiderState.WebAim,
+    SpiderState.Respawning
+  ],
+
+  [SpiderState.Stunned]: [
+    SpiderState.Airborne,
+    SpiderState.Respawning
+  ],
+
+  [SpiderState.Respawning]: [
+    SpiderState.SurfaceIdle
+  ],
+
+  [SpiderState.Disabled]: []
+};
+
+---
+
+10. EventBus
+
+Системы должны общаться через события только там, где нет прямой зависимости.
+
+Примеры:
+
+export interface GameEventMap {
+  "spider:jumped": {
+    position: Vector2;
+  };
+
+  "spider:attached": {
+    position: Vector2;
+    surfaceId: string;
+  };
+
+  "spider:respawned": {
+    checkpointId: string;
+  };
+
+  "web:created": {
+    strandId: number;
+  };
+
+  "web:broken": {
+    strandId: number;
+    position: Vector2;
+  };
+
+  "web:removed": {
+    strandId: number;
+  };
+
+  "web:limit-warning": {
+    usageRatio: number;
+  };
+
+  "plate:activated": {
+    objectId: string;
+  };
+
+  "plate:deactivated": {
+    objectId: string;
+  };
+
+  "door:opened": {
+    objectId: string;
+  };
+
+  "checkpoint:activated": {
+    checkpointId: string;
+  };
+
+  "prototype:completed": {
+    completionTimeMs: number;
+  };
+}
+
+export class EventBus<TEventMap extends object> {
+  on<TKey extends keyof TEventMap>(
+    event: TKey,
+    handler: (payload: TEventMap[TKey]) => void
+  ): () => void {}
+
+  emit<TKey extends keyof TEventMap>(
+    event: TKey,
+    payload: TEventMap[TKey]
+  ): void {}
+
+  clear(): void {}
+}
+
+События не должны использоваться для каждого физического кадра.
+
+---
+
+11. Физика героя
+
+11.1. Коллайдер
+
+Используется круглый коллайдер.
+
+export const spiderBodyConfig = {
+  radius: 17,
+  mass: 0.8,
+  friction: 0,
+  frictionAir: 0.015,
+  restitution: 0.05,
+  inertia: Infinity
+};
+
+Физическое вращение тела отключено. Визуальная ориентация рассчитывается отдельно.
+
+11.2. Направления
+
+Герой хранит:
+
+interface SpiderOrientation {
+  surfaceNormal: Vector2;
+  surfaceTangent: Vector2;
+  visualAngleRad: number;
+}
+
+При движении по поверхности сила прикладывается вдоль "surfaceTangent".
+
+При прыжке основная сила направлена по "surfaceNormal".
+
+11.3. Сцепление
+
+Пока герой находится на поверхности, к нему применяется корректирующая сила.
+
+snapForce = distanceError × snapStrength - normalVelocity × damping
+
+Начальные значения:
+
+export const surfaceAttachmentConfig = {
+  targetDistance: 17,
+  snapStrength: 70,
+  snapDamping: 12,
+  maximumSnapForce: 2400
+};
+
+11.4. Переход через угол
+
+Алгоритм:
+
+1. Получить текущую поверхность.
+2. Определить направление движения.
+3. Найти поверхность перед героем по дуге.
+4. Проверить допустимый угол.
+5. Начать интерполяцию нормали.
+6. На время перехода ограничить отрыв.
+7. Завершить переход после достижения новой контактной точки.
+
+Переход не должен телепортировать героя более чем на 24 логические единицы за один кадр.
+
+---
+
+12. Прыжок
+
+12.1. Условия
+
+Прыжок разрешён, если:
+
+- герой касается поверхности;
+- герой покинул поверхность не более 100 мс назад;
+- герой не находится в состоянии "Stunned";
+- управление включено.
+
+12.2. Buffer
+
+Если игрок нажал кнопку до приземления, команда хранится 130 мс.
+
+После доступного контакта прыжок выполняется автоматически.
+
+12.3. Переменная высота
+
+Пока кнопка удерживается и максимальное время не истекло:
+
+- вертикальное ускорение героя немного уменьшается;
+- либо добавляется небольшой дополнительный импульс.
+
+При раннем отпускании восходящая скорость умножается на "0.48".
+
+---
+
+13. WebSystem
+
+13.1. Ответственность
+
+"WebSystem" управляет:
+
+- графом;
+- физическими частицами;
+- созданием нитей;
+- удалением;
+- обновлением креплений;
+- решателем;
+- натяжением;
+- разрывами;
+- визуализацией;
+- лимитами.
+
+export class WebSystem {
+  readonly graph: WebGraph;
+
+  createStrand(request: CreateStrandRequest): CreateStrandResult {}
+
+  removeStrand(strandId: number): void {}
+
+  cutNearestStrand(position: Vector2, radius: number): number | null {}
+
+  fixedUpdate(deltaSeconds: number): void {}
+
+  render(alpha: number): void {}
+
+  reset(): void {}
+
+  serialize(): SavedWebGraph {}
+
+  restore(data: SavedWebGraph): void {}
+
+  getStats(): WebRuntimeStats {}
+}
+
+---
+
+14. WebGraph
+
+export class WebGraph {
+  private nodes = new Map<number, WebNode>();
+  private strands = new Map<number, WebStrand>();
+
+  addNode(node: WebNode): void {}
+
+  removeNode(nodeId: number): void {}
+
+  addStrand(strand: WebStrand): void {}
+
+  removeStrand(strandId: number): void {}
+
+  getNode(id: number): WebNode {}
+
+  getStrand(id: number): WebStrand {}
+
+  getConnectedStrands(nodeId: number): WebStrand[] {}
+
+  getConnectedComponent(nodeId: number): WebComponent {}
+
+  clear(): void {}
+}
+
+Удаление нити должно автоматически удалять неиспользуемые временные узлы.
+
+---
+
+15. WebNode
+
+export type WebNodeType =
+  | "world-anchor"
+  | "body-anchor"
+  | "spider-anchor"
+  | "junction";
+
+export interface WebNode {
+  id: number;
+  type: WebNodeType;
+
+  position: Vector2;
+  previousPosition: Vector2;
+
+  pinned: boolean;
+  sleeping: boolean;
+
+  bodyId?: number;
+  localOffset?: Vector2;
+
+  connectedStrandIds: number[];
+}
+
+---
+
+16. WebStrand
+
+export interface WebStrand {
+  id: number;
+
+  nodeAId: number;
+  nodeBId: number;
+
+  restLength: number;
+  currentLength: number;
+
+  stiffness: number;
+  damping: number;
+
+  breakStretchRatio: number;
+  breakDelayMs: number;
+  overloadTimeMs: number;
+
+  particleIds: number[];
+
+  tensionNormalized: number;
+
+  sleeping: boolean;
+  active: boolean;
+  playerCreated: boolean;
+}
+
+---
+
+17. WebParticle
+
+export interface WebParticle {
+  id: number;
+
+  position: Vector2;
+  previousPosition: Vector2;
+  acceleration: Vector2;
+
+  inverseMass: number;
+
+  pinned: boolean;
+  sleeping: boolean;
+}
+
+Для прототипа можно хранить частицы в предварительно выделенных typed arrays, но допустима первая объектная реализация с последующей оптимизацией.
+
+---
+
+18. Создание нити
+
+18.1. Запрос
+
+export interface CreateStrandRequest {
+  start: WebAttachmentTarget;
+  end: WebAttachmentTarget;
+
+  requestedRestLength?: number;
+  playerCreated: boolean;
+}
+
+export type WebAttachmentTarget =
+  | {
+      type: "world";
+      point: Vector2;
+      surfaceId: string;
+    }
+  | {
+      type: "body";
+      bodyId: number;
+      localOffset: Vector2;
+    }
+  | {
+      type: "spider";
+    }
+  | {
+      type: "existing-node";
+      nodeId: number;
+    };
+
+18.2. Проверки
+
+Перед созданием проверить:
+
+- дальность;
+- допустимость поверхности;
+- пересечение запретной геометрии;
+- лимит нитей;
+- минимальную длину;
+- существование цели;
+- отсутствие полностью идентичной нити.
+
+18.3. Параметры
+
+export const webConfig = {
+  maxPlayerStrands: 80,
+  maxParticles: 320,
+
+  particleSpacing: 24,
+  minimumStrandLength: 30,
+  maximumShotDistance: 520,
+
+  stiffness: 0.72,
+  damping: 0.08,
+
+  breakStretchRatio: 1.52,
+  breakDelayMs: 180,
+
+  solverIterations: 6,
+  gravityScale: 0.55,
+
+  cutRadius: 48,
+
+  sleepDelayMs: 1500,
+  sleepVelocityThreshold: 4,
+  sleepTensionDeltaThreshold: 0.01
+};
+
+---
+
+19. WebSolver
+
+19.1. Порядок симуляции
+
+export class WebSolver {
+  integrate(deltaSeconds: number): void {}
+
+  solveDistanceConstraints(): void {}
+
+  solveCollisions(): void {}
+
+  applyBodyForces(): void {}
+
+  updateVelocities(deltaSeconds: number): void {}
+
+  updateTension(deltaSeconds: number): void {}
+}
+
+На каждом фиксированном шаге:
+
+1. Обновить закреплённые узлы.
+2. Применить гравитацию.
+3. Предсказать позиции.
+4. Решить ограничения длины.
+5. Решить столкновения.
+6. Повторить ограничения.
+7. Передать силы динамическим телам.
+8. Рассчитать скорости.
+9. Рассчитать натяжение.
+10. Проверить разрывы.
+11. Обновить состояние сна.
+
+19.2. Verlet-интеграция
+
+velocity = currentPosition - previousPosition
+
+nextPosition =
+  currentPosition
+  + velocity × damping
+  + acceleration × deltaTime²
+
+После расчёта:
+
+previousPosition = currentPosition
+currentPosition = nextPosition
+acceleration = 0
+
+19.3. Ограничение расстояния
+
+Для двух частиц:
+
+delta = pointB - pointA
+distance = length(delta)
+error = distance - targetDistance
+correction = delta / distance × error
+
+Коррекция распределяется по обратной массе.
+
+---
+
+20. Крепление к Matter.js
+
+20.1. BodyAnchor
+
+Для крепления к динамическому телу сохраняются:
+
+- ID тела;
+- локальная координата;
+- последняя мировая позиция.
+
+Каждый шаг:
+
+worldPoint =
+  body.position
+  + rotate(localOffset, body.angle)
+
+20.2. Передача нагрузки
+
+После решения паутины рассчитывается разница между требуемой и фактической позицией крепления.
+
+На тело прикладывается ограниченная сила:
+
+force =
+  displacement × stiffness
+  - relativeVelocity × damping
+
+Сила ограничивается:
+
+const maximumAttachmentForce = 1600;
+
+20.3. Защита от нестабильности
+
+- не передавать импульс несколько раз за одну итерацию;
+- суммировать силы всех нитей;
+- ограничивать общий импульс на тело;
+- тяжёлые тела не должны получать чрезмерное ускорение;
+- при ошибочном значении "NaN" нить удаляется, а ошибка записывается в журнал.
+
+---
+
+21. Активная нить героя
+
+"SpiderWebController" хранит текущую активную нить.
+
+export class SpiderWebController {
+  private activeStrandId: number | null;
+  private aiming: boolean;
+
+  beginAim(): void {}
+
+  updateAim(input: InputFrame): void {}
+
+  releaseAim(): void {}
+
+  quickFire(): void {}
+
+  reelIn(deltaSeconds: number): void {}
+
+  reelOut(deltaSeconds: number): void {}
+
+  detach(): void {}
+
+  cutNearest(): void {}
+}
+
+Начальные параметры:
+
+export const tetherConfig = {
+  reelInSpeed: 180,
+  reelOutSpeed: 230,
+  minimumLength: 36,
+  maximumLength: 720,
+  swingAssistAcceleration: 240,
+  detachReattachCooldownMs: 80
+};
+
+---
+
+22. Прицеливание
+
+22.1. Режимы
+
+Быстрый выпуск
+
+Используется последнее ненулевое направление:
+
+1. Направление прицела.
+2. Направление стика.
+3. Направление скорости.
+4. Направление взгляда героя.
+
+Точное прицеливание
+
+Активируется после удержания кнопки более 140 мс.
+
+Время замедляется до "0.35".
+
+22.2. Поиск точки
+
+1. Выполнить основной raycast.
+2. Если точка не найдена, проверить конус помощи.
+3. Отсортировать кандидатов.
+4. Выбрать наиболее подходящий.
+5. Показать предпросмотр.
+
+22.3. Рейтинг кандидата
+
+score =
+  aimAlignment × 0.5
+  + distancePreference × 0.2
+  + explicitAnchorBonus × 0.2
+  + visibility × 0.1
+
+22.4. Визуальная индикация
+
+- зелёная точка — допустимое крепление;
+- жёлтая — крепление с помощью прицеливания;
+- красная — недоступное;
+- пунктир — предполагаемая нить;
+- круг — максимальная дальность.
+
+---
+
+23. Разрыв нити
+
+23.1. Накопление перегрузки
+
+if (stretchRatio >= breakStretchRatio) {
+  strand.overloadTimeMs += deltaMs;
+} else {
+  strand.overloadTimeMs = Math.max(
+    0,
+    strand.overloadTimeMs - deltaMs * 2
+  );
+}
+
+Разрыв:
+
+if (strand.overloadTimeMs >= strand.breakDelayMs) {
+  breakStrand(strand.id);
+}
+
+23.2. Предупреждение
+
+При натяжении:
+
+- "0.0–0.6" — обычное состояние;
+- "0.6–0.8" — яркость немного увеличивается;
+- "0.8–0.95" — нить пульсирует;
+- "0.95–1.0" — дрожание и звук треска;
+- "1.0" — начинается таймер разрыва.
+
+23.3. Разделение
+
+Нить разрывается в сегменте с максимальной ошибкой длины.
+
+Создаются два новых конца.
+
+Для прототипа свободные концы могут исчезать через 1,5 секунды, если не связаны с героем или объектом.
+
+---
+
+24. WebRenderer
+
+24.1. Первая реализация
+
+Для прототипа используется Phaser Graphics или собственный WebGL mesh.
+
+Минимальный вариант:
+
+- одна линия на нить;
+- интерполяция через частицы;
+- изменение толщины;
+- изменение прозрачности;
+- цвет по натяжению.
+
+24.2. Толщина
+
+baseWidth = 2.5 units
+
+renderWidth =
+  baseWidth
+  + tensionNormalized × 1.5
+
+24.3. Частота обновления
+
+- активные нити — каждый кадр;
+- спящие нити — только при изменении камеры;
+- далёкие нити — через кадр.
+
+---
+
+25. Выбор и разрезание
+
+25.1. Выбор ближайшей нити
+
+Расстояние рассчитывается от позиции героя до каждого сегмента в пространственном индексе.
+
+Выбирается нить:
+
+- ближе 48 единиц;
+- видимая;
+- не заблокированная геометрией;
+- принадлежащая игроку.
+
+25.2. Разрезание
+
+После команды:
+
+1. Подсветить выбранный сегмент.
+2. Проиграть короткую анимацию.
+3. Разделить нить.
+4. Передать событие "web:broken".
+5. Обновить граф.
+
+---
+
+26. Динамические объекты
+
+26.1. DynamicCrate
+
+export interface DynamicCrateConfig {
+  width: number;
+  height: number;
+  mass: number;
+  friction: number;
+  restitution: number;
+}
+
+Функции:
+
+- сталкивается с миром;
+- удерживает кнопку;
+- допускает крепление нити;
+- сбрасывается при перезапуске.
+
+26.2. HangingWeight
+
+Груз изначально подвешен на предустановленной нити.
+
+Игрок может:
+
+- натянуть её;
+- добавить вторую нить;
+- разрезать;
+- переместить груз.
+
+26.3. PressurePlate
+
+Определяет общий вес тел в области.
+
+export class PressurePlate {
+  private activationMass: number;
+  private currentMass: number;
+  private active: boolean;
+
+  fixedUpdate(): void {}
+
+  isActive(): boolean {}
+}
+
+Начальный порог:
+
+activationMass = 1.0
+activationDelay = 150 мс
+deactivationDelay = 100 мс
+
+Задержка предотвращает мерцание состояния.
+
+26.4. PrototypeDoor
+
+Состояния:
+
+Closed
+Opening
+Open
+Closing
+
+Дверь открывается, если кнопка активна.
+
+Во время открытия коллайдер постепенно отключается или перемещается вместе с визуальным объектом.
+
+---
+
+27. Контрольная точка
+
+export interface PrototypeCheckpointState {
+  checkpointId: string;
+
+  spiderPosition: Vector2;
+  spiderSurfaceNormal: Vector2;
+
+  crateStates: Record<string, RigidBodySnapshot>;
+  mechanismStates: Record<string, unknown>;
+
+  requiredWeb?: SavedWebGraph;
+}
+
+Для первого прототипа пользовательская паутина при смерти может очищаться полностью.
+
+Сюжетная нить подвешенного груза восстанавливается.
+
+---
+
+28. Падение и перезапуск
+
+28.1. Зона падения
+
+Под комнатой находится trigger "death-zone".
+
+При входе:
+
+1. Ввод отключается.
+2. Физика героя замораживается.
+3. Экран затемняется.
+4. Комната восстанавливается.
+5. Герой появляется на контрольной точке.
+6. Даётся короткая защита.
+7. Экран возвращается.
+
+28.2. Временные параметры
+
+fadeOut = 120 мс
+restoreState = до 400 мс
+fadeIn = 180 мс
+inputProtection = 350 мс
+
+Полная перезагрузка Phaser Scene не требуется. Желательно восстанавливать состояние внутри сцены.
+
+---
+
+29. Камера
+
+export interface CameraConfig {
+  baseZoom: number;
+  minimumZoom: number;
+  maximumZoom: number;
+
+  positionSmoothTimeMs: number;
+  zoomSmoothTimeMs: number;
+
+  maximumVelocityLead: number;
+  maximumAimLead: number;
+}
+
+Начальные значения:
+
+export const cameraConfig: CameraConfig = {
+  baseZoom: 1,
+  minimumZoom: 0.82,
+  maximumZoom: 1.08,
+
+  positionSmoothTimeMs: 160,
+  zoomSmoothTimeMs: 220,
+
+  maximumVelocityLead: 140,
+  maximumAimLead: 180
+};
+
+Цель камеры:
+
+target =
+  spiderPosition
+  + normalizedVelocity × velocityLead
+  + aimDirection × aimLead
+
+Камера не вращается вместе с пауком.
+
+---
+
+30. Формат уровня
+
+Файл:
+
+src/content/levels/prototype-room.json
+
+Пример:
+
+{
+  "id": "prototype-room",
+  "version": 1,
+
+  "worldBounds": {
+    "x": 0,
+    "y": 0,
+    "width": 4200,
+    "height": 1400
+  },
+
+  "cameraBounds": {
+    "x": 0,
+    "y": 0,
+    "width": 4200,
+    "height": 1200
+  },
+
+  "spawnPoints": [
+    {
+      "id": "start",
+      "x": 180,
+      "y": 920,
+      "surfaceNormal": {
+        "x": 0,
+        "y": -1
+      }
+    }
+  ],
+
+  "checkpoints": [
+    {
+      "id": "checkpoint-start",
+      "spawnPointId": "start",
+      "activation": "automatic"
+    },
+    {
+      "id": "checkpoint-swing",
+      "x": 1900,
+      "y": 760,
+      "surfaceNormal": {
+        "x": 0,
+        "y": -1
+      },
+      "activation": "trigger"
+    }
+  ],
+
+  "geometry": [
+    {
+      "id": "floor-start",
+      "type": "rectangle",
+      "x": 0,
+      "y": 980,
+      "width": 900,
+      "height": 120,
+      "material": "stone"
+    },
+    {
+      "id": "wall-training",
+      "type": "rectangle",
+      "x": 720,
+      "y": 520,
+      "width": 100,
+      "height": 460,
+      "material": "wood"
+    }
+  ],
+
+  "anchors": [
+    {
+      "id": "swing-anchor-a",
+      "x": 1180,
+      "y": 260,
+      "type": "explicit"
+    },
+    {
+      "id": "swing-anchor-b",
+      "x": 1510,
+      "y": 190,
+      "type": "explicit"
+    },
+    {
+      "id": "swing-anchor-c",
+      "x": 1800,
+      "y": 300,
+      "type": "explicit"
+    }
+  ],
+
+  "objects": [
+    {
+      "id": "puzzle-crate",
+      "prefab": "dynamic-crate",
+      "x": 2850,
+      "y": 860,
+      "properties": {
+        "mass": 1.2
+      }
+    },
+    {
+      "id": "door-plate",
+      "prefab": "pressure-plate",
+      "x": 3400,
+      "y": 930,
+      "properties": {
+        "activationMass": 1
+      }
+    },
+    {
+      "id": "exit-door",
+      "prefab": "prototype-door",
+      "x": 3700,
+      "y": 700,
+      "properties": {
+        "controlledBy": "door-plate"
+      }
+    }
+  ],
+
+  "triggers": [
+    {
+      "id": "death-zone",
+      "type": "rect",
+      "x": 0,
+      "y": 1220,
+      "width": 4200,
+      "height": 180,
+      "action": "respawn"
+    },
+    {
+      "id": "finish-zone",
+      "type": "rect",
+      "x": 4020,
+      "y": 700,
+      "width": 120,
+      "height": 240,
+      "action": "complete-prototype"
+    }
+  ]
+}
+
+---
+
+31. Валидация уровня
+
+При загрузке проверять:
+
+- уникальность всех ID;
+- наличие "worldBounds";
+- наличие стартовой точки;
+- существование всех ссылок;
+- корректность размеров;
+- нахождение объектов внутри мира;
+- отсутствие отрицательной массы;
+- допустимость материалов;
+- наличие выхода;
+- наличие death-zone;
+- существование управляемого объекта для двери.
+
+При ошибке:
+
+- остановить загрузку;
+- вывести понятное сообщение;
+- показать ID проблемного объекта;
+- не запускать частично повреждённую комнату.
+
+---
+
+32. Материалы поверхности
+
+export interface PhysicsMaterialDefinition {
+  id: string;
+
+  spiderWalkable: boolean;
+  webAttachable: boolean;
+
+  surfaceFriction: number;
+  attachmentStrength: number;
+
+  color: number;
+}
+
+Материалы прототипа:
+
+export const materials = {
+  stone: {
+    id: "stone",
+    spiderWalkable: true,
+    webAttachable: true,
+    surfaceFriction: 1,
+    attachmentStrength: 1,
+    color: 0x6f7480
+  },
+
+  wood: {
+    id: "wood",
+    spiderWalkable: true,
+    webAttachable: true,
+    surfaceFriction: 1.1,
+    attachmentStrength: 1.2,
+    color: 0x8b6545
+  },
+
+  metal: {
+    id: "metal",
+    spiderWalkable: true,
+    webAttachable: true,
+    surfaceFriction: 0.8,
+    attachmentStrength: 0.9,
+    color: 0x777f8f
+  },
+
+  slippery: {
+    id: "slippery",
+    spiderWalkable: true,
+    webAttachable: false,
+    surfaceFriction: 0.4,
+    attachmentStrength: 0,
+    color: 0x7295b5
+  }
+};
+
+---
+
+33. Интерфейс прототипа
+
+33.1. HUD
+
+Показывает:
+
+- стик;
+- кнопку прыжка;
+- кнопку паутины;
+- кнопку разрезания при необходимости;
+- индикатор количества нитей;
+- временные подсказки;
+- кнопку паузы.
+
+33.2. Подсказки
+
+Подсказки появляются один раз.
+
+Примеры:
+
+Двигайтесь по любой поверхности.
+Нажмите кнопку прыжка.
+Удерживайте паутину и выберите точку.
+Двигайтесь в сторону раскачивания.
+Привяжите предмет к поверхности.
+
+Подсказка скрывается после выполнения действия.
+
+33.3. Результаты
+
+После завершения показать:
+
+- время прохождения;
+- число падений;
+- число созданных нитей;
+- число разрывов;
+- максимальное количество одновременных нитей;
+- кнопку повторить;
+- кнопку открыть песочницу, если она будет добавлена позднее.
+
+---
+
+34. Настройки прототипа
+
+Обязательные настройки:
+
+- громкость;
+- размер интерфейса;
+- прозрачность интерфейса;
+- леворукое управление;
+- фиксированный или плавающий стик;
+- сила помощи прицеливания;
+- тряска камеры;
+- качество графики;
+- ограничение 30 или 60 FPS;
+- отображение FPS.
+
+Настройки сохраняются в IndexedDB.
+
+---
+
+35. PWA
+
+35.1. Manifest
+
+{
+  "name": "Silkbound Prototype",
+  "short_name": "Silkbound",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#10141d",
+  "theme_color": "#10141d",
+  "icons": []
+}
+
+35.2. Service Worker
+
+Для прототипа кэшируются:
+
+- HTML;
+- JavaScript;
+- CSS;
+- JSON-конфигурации;
+- тестовая сцена;
+- интерфейс;
+- звуки;
+- изображения.
+
+После первого успешного запуска прототип должен работать офлайн.
+
+35.3. Обновления
+
+Новая версия активируется после перезагрузки страницы.
+
+Не обновлять приложение во время активной игровой сцены.
+
+---
+
+36. Жизненный цикл страницы
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    gameApp.pauseFromSystem();
+  } else {
+    gameApp.resumeFromSystem();
+  }
+});
+
+При паузе:
+
+- отключить ввод;
+- остановить fixed update;
+- остановить звук;
+- сохранить настройки;
+- очистить накопленное время.
+
+При возврате:
+
+- не продолжать игру автоматически;
+- открыть меню паузы;
+- восстановить аудио после касания;
+- пересчитать размер canvas.
+
+---
+
+37. Debug Overlay
+
+Обязательные панели:
+
+Performance
+
+- FPS;
+- frame time;
+- physics time;
+- web solver time;
+- render time;
+- число Matter.js тел;
+- число нитей;
+- число частиц;
+- число спящих нитей.
+
+Spider
+
+- состояние;
+- скорость;
+- контактная поверхность;
+- нормаль;
+- coyote timer;
+- jump buffer;
+- активная нить.
+
+Web
+
+- ID выбранной нити;
+- длина;
+- натяжение;
+- перегрузка;
+- число частиц;
+- состояние сна.
+
+Level
+
+- текущая контрольная точка;
+- активность кнопки;
+- состояние двери;
+- координаты камеры.
+
+---
+
+38. Debug-команды
+
+F1 — показать overlay
+F2 — показать коллайдеры
+F3 — показать нормали поверхностей
+F4 — показать частицы паутины
+F5 — показать натяжение
+F6 — заморозить физику
+F7 — выполнить один физический шаг
+F8 — создать тестовую нить
+F9 — создать 40 нитей
+F10 — удалить всю паутину
+R — перезапустить контрольную точку
+
+---
+
+39. Автоматические тесты
+
+39.1. Unit-тесты
+
+SpiderStateMachine
+
+Проверить:
+
+- допустимые переходы;
+- запрет недопустимых;
+- выход из "Stunned";
+- возврат после respawn.
+
+JumpBuffer
+
+Проверить:
+
+- нажатие до приземления;
+- истечение таймера;
+- coyote time;
+- раннее отпускание.
+
+WebGraph
+
+Проверить:
+
+- создание узлов;
+- создание нити;
+- удаление;
+- очистку изолированных узлов;
+- connected components.
+
+WebSolver
+
+Проверить:
+
+- сохранение длины;
+- растяжение;
+- закреплённые частицы;
+- отсутствие "NaN";
+- работу демпфирования.
+
+WebBreak
+
+Проверить:
+
+- однокадровая перегрузка не рвёт нить;
+- длительная перегрузка рвёт;
+- overload timer восстанавливается;
+- выбирается правильный сегмент.
+
+LevelValidator
+
+Проверить:
+
+- повторяющиеся ID;
+- отсутствующие ссылки;
+- отрицательную массу;
+- отсутствие spawn point;
+- некорректные границы.
+
+---
+
+40. Интеграционные тесты
+
+Тест 1. Прыжок
+
+1. Поставить героя на поверхность.
+2. Отправить команду прыжка.
+3. Проверить состояние "Airborne".
+4. Проверить положительную скорость по нормали.
+5. Приземлить героя.
+6. Проверить состояние поверхности.
+
+Тест 2. Раскачивание
+
+1. Создать точку крепления.
+2. Прикрепить героя.
+3. Добавить боковую скорость.
+4. Выполнить симуляцию.
+5. Проверить сохранение дугового движения.
+6. Отпустить нить.
+7. Проверить сохранение импульса.
+
+Тест 3. Динамический объект
+
+1. Создать ящик.
+2. Связать его с опорой.
+3. Приложить силу.
+4. Проверить натяжение.
+5. Проверить отсутствие резкого ускорения.
+6. Разрезать нить.
+
+Тест 4. Перезапуск
+
+1. Изменить положение ящика.
+2. Создать несколько нитей.
+3. Активировать кнопку.
+4. Войти в death-zone.
+5. Проверить восстановление ящика.
+6. Проверить закрытие двери.
+7. Проверить удаление пользовательской паутины.
+
+Тест 5. Сворачивание
+
+1. Начать раскачивание.
+2. Приостановить приложение.
+3. Подождать.
+4. Возобновить.
+5. Проверить отсутствие огромного physics delta.
+6. Проверить открытие паузы.
+
+---
+
+41. Производительные тесты
+
+Набор A. Базовая сцена
+
+- герой;
+- 10 статических тел;
+- 3 динамических тела;
+- 5 нитей.
+
+Цель:
+
+60 FPS на среднем устройстве.
+
+Набор B. Нормальная нагрузка
+
+- 30 нитей;
+- 160 частиц;
+- 5 динамических тел.
+
+Цель:
+
+Не более 3,5 мс на WebSolver.
+
+Набор C. Максимальная нагрузка
+
+- 80 нитей;
+- 320 частиц;
+- 10 динамических креплений.
+
+Цель:
+
+Не менее 30 FPS на слабом устройстве.
+Отсутствие зависания.
+Отсутствие NaN.
+
+Набор D. Длительная сессия
+
+- 30 минут непрерывной игры;
+- многократное создание и удаление нитей;
+- 50 перезапусков;
+- 20 сворачиваний.
+
+Цель:
+
+- память не растёт постоянно;
+- обработчики событий не дублируются;
+- физические тела полностью удаляются;
+- звук не создаёт утечки.
+
+---
+
+42. Логирование ошибок
+
+export interface DiagnosticEvent {
+  timestamp: number;
+  severity: "info" | "warning" | "error";
+
+  system: string;
+  code: string;
+  message: string;
+
+  roomId?: string;
+  objectId?: string;
+
+  data?: Record<string, unknown>;
+}
+
+Критические события:
+
+- появление "NaN";
+- отсутствующее тело крепления;
+- превышение лимита частиц;
+- разрушенный граф;
+- невозможность восстановить контрольную точку;
+- ошибка загрузки JSON;
+- ошибка IndexedDB.
+
+---
+
+43. Этапы реализации
+
+Этап 0. Репозиторий и окружение
+
+Задачи:
+
+- создать Vite-проект;
+- подключить TypeScript;
+- подключить Phaser;
+- подключить Matter.js;
+- настроить ESLint;
+- настроить Prettier;
+- подключить Vitest;
+- создать CI;
+- добавить пустую PWA;
+- создать BootScene;
+- создать PrototypeScene.
+
+Критерий:
+
+- пустая сцена запускается на телефоне;
+- PWA устанавливается;
+- тесты запускаются в CI.
+
+---
+
+Этап 1. Fixed timestep и ввод
+
+Задачи:
+
+- реализовать "FixedStepRunner";
+- реализовать "InputSystem";
+- реализовать клавиатурный адаптер;
+- реализовать touch joystick;
+- реализовать кнопки;
+- добавить debug-отображение команд.
+
+Критерий:
+
+- одинаковые команды поступают от клавиатуры и экрана;
+- transient-события не повторяются;
+- ввод отключается при паузе.
+
+---
+
+Этап 2. Тело героя
+
+Задачи:
+
+- создать Matter.js body;
+- реализовать движение по полу;
+- реализовать ускорение и торможение;
+- добавить камеру;
+- добавить placeholder-спрайт.
+
+Критерий:
+
+- герой плавно движется;
+- нет физического вращения;
+- камера не дёргается.
+
+---
+
+Этап 3. Поверхности
+
+Задачи:
+
+- raycast-сенсоры;
+- определение нормали;
+- движение по стене;
+- движение по потолку;
+- переход через углы;
+- визуальная ориентация.
+
+Критерий:
+
+- герой проходит замкнутую прямоугольную комнату по всему периметру;
+- не застревает на углах;
+- камера не вращается.
+
+---
+
+Этап 4. Прыжок
+
+Задачи:
+
+- прыжок;
+- переменная высота;
+- coyote time;
+- jump buffer;
+- управление в воздухе;
+- прилипание;
+- оглушение при сильном ударе.
+
+Критерий:
+
+- игрок стабильно перепрыгивает тестовый разрыв;
+- раннее нажатие перед приземлением учитывается;
+- прыжок после схода с края работает в течение 100 мс.
+
+---
+
+Этап 5. WebGraph
+
+Задачи:
+
+- узлы;
+- нити;
+- ID;
+- connected components;
+- создание;
+- удаление;
+- сериализация;
+- unit-тесты.
+
+Критерий:
+
+- граф корректно создаётся и удаляется;
+- изолированные временные узлы очищаются;
+- сериализация восстанавливает структуру.
+
+---
+
+Этап 6. WebSolver
+
+Задачи:
+
+- частицы;
+- Verlet;
+- ограничения длины;
+- закреплённые точки;
+- итерации;
+- гравитация;
+- демпфирование;
+- debug-render.
+
+Критерий:
+
+- нить провисает;
+- нить удерживает собственную форму;
+- закреплённые концы не двигаются;
+- отсутствуют взрывы симуляции.
+
+---
+
+Этап 7. Паутина героя
+
+Задачи:
+
+- быстрый выпуск;
+- точное прицеливание;
+- raycast;
+- активная нить;
+- раскачивание;
+- reel in;
+- reel out;
+- отпускание;
+- swing assist.
+
+Критерий:
+
+- игрок пересекает большую пропасть;
+- импульс сохраняется;
+- прицеливание удобно на телефоне;
+- нить не создаётся сквозь запретную геометрию.
+
+---
+
+Этап 8. Динамические крепления
+
+Задачи:
+
+- BodyAnchor;
+- передача сил;
+- ограничения импульса;
+- ящик;
+- груз;
+- крепление к движущемуся телу.
+
+Критерий:
+
+- нить способна тянуть ящик;
+- ящик не получает бесконечную скорость;
+- удаление ящика не ломает граф.
+
+---
+
+Этап 9. Натяжение и разрыв
+
+Задачи:
+
+- расчёт длины;
+- нормализованное натяжение;
+- overload timer;
+- визуальное состояние;
+- звук;
+- разрыв;
+- свободные концы.
+
+Критерий:
+
+- игрок видит приближение разрыва;
+- короткий физический скачок не рвёт нить;
+- длительное превышение нагрузки рвёт.
+
+---
+
+Этап 10. Механизм комнаты
+
+Задачи:
+
+- PressurePlate;
+- PrototypeDoor;
+- DynamicCrate;
+- HangingWeight;
+- взаимодействие;
+- разные решения задачи.
+
+Критерий:
+
+- дверь открывается минимум двумя способами;
+- состояние не мерцает;
+- перезапуск восстанавливает механизм.
+
+---
+
+Этап 11. Контрольные точки
+
+Задачи:
+
+- checkpoint state;
+- death-zone;
+- затемнение;
+- восстановление;
+- защита после появления;
+- ручной restart.
+
+Критерий:
+
+- возврат не превышает двух секунд;
+- после 20 перезапусков состояние остаётся корректным.
+
+---
+
+Этап 12. HUD и обучение
+
+Задачи:
+
+- финальный touch HUD прототипа;
+- подсказки;
+- индикатор паутины;
+- пауза;
+- настройки;
+- экран результатов.
+
+Критерий:
+
+- новый игрок проходит обучение без устной помощи;
+- элементы не перекрывают героя;
+- поддерживается леворукий режим.
+
+---
+
+Этап 13. PWA и оптимизация
+
+Задачи:
+
+- service worker;
+- offline cache;
+- manifest;
+- responsive canvas;
+- safe area;
+- suspend/resume;
+- adaptive quality;
+- профилирование.
+
+Критерий:
+
+- игра запускается офлайн;
+- сворачивание не ломает сцену;
+- среднее устройство удерживает 60 FPS;
+- слабое устройство удерживает 30 FPS.
+
+---
+
+44. Рекомендуемая структура GitHub Issues
+
+Epic: Project Foundation
+
+- Initialize Vite and TypeScript
+- Add Phaser runtime
+- Configure Matter.js
+- Add linting and formatting
+- Add unit test pipeline
+- Add browser build pipeline
+- Add PWA shell
+
+Epic: Input
+
+- Implement shared InputFrame
+- Implement keyboard adapter
+- Implement touch joystick
+- Implement touch buttons
+- Add left-handed mode
+- Add input debug overlay
+
+Epic: Spider Movement
+
+- Create spider body
+- Implement surface movement
+- Implement surface sensing
+- Implement corner transitions
+- Implement jumping
+- Implement coyote time
+- Implement jump buffering
+- Implement air control
+- Implement surface attachment
+
+Epic: Web Physics
+
+- Implement WebGraph
+- Implement particles
+- Implement solver
+- Implement world anchors
+- Implement body anchors
+- Implement web rendering
+- Implement tension
+- Implement strand breaking
+- Implement web deletion
+- Implement sleeping
+- Implement network limits
+
+Epic: Prototype Level
+
+- Create test room geometry
+- Add swing section
+- Add crate puzzle
+- Add pressure plate
+- Add door
+- Add checkpoints
+- Add finish trigger
+
+Epic: Mobile and PWA
+
+- Add responsive scaling
+- Add safe-area support
+- Add suspend and resume
+- Add offline cache
+- Test installation
+- Test Android Chrome
+- Test iOS Safari
+
+---
+
+45. Definition of Done для задачи
+
+Любая задача считается завершённой, если:
+
+- код собирается без ошибок;
+- нет ошибок линтера;
+- добавлены необходимые типы;
+- написаны unit-тесты для чистой логики;
+- система проверена вручную на телефоне;
+- нет новых предупреждений в консоли;
+- параметры вынесены в конфигурацию;
+- обновлена документация;
+- добавлены debug-инструменты, если система физическая;
+- сценарий работает после перезапуска;
+- сценарий работает после сворачивания приложения.
+
+---
+
+46. Обязательные метрики плейтеста
+
+Для каждого тестировщика фиксировать:
+
+- время до первого движения;
+- время до первого прыжка;
+- число попыток первого большого раскачивания;
+- число случайных выпусков паутины;
+- число падений;
+- время решения задачи с ящиком;
+- использованный способ решения;
+- число созданных нитей;
+- число случайно разрезанных нитей;
+- субъективную оценку управления;
+- субъективную оценку раскачивания;
+- момент, когда игрок не понимал дальнейшее действие.
+
+Ключевой показатель:
+
+«Не менее 70% новых тестировщиков должны выполнить первое большое раскачивание не более чем за три попытки.»
+
+---
+
+47. Вопросы плейтеста
+
+После прохождения спросить:
+
+1. Было ли понятно, куда можно прикреплять паутину?
+2. Было ли понятно, почему нить порвалась?
+3. Чувствовали ли вы контроль во время раскачивания?
+4. Случалось ли нажимать не ту кнопку?
+5. Перекрывали ли пальцы важную часть экрана?
+6. Было ли движение по стенам предсказуемым?
+7. Поняли ли вы задачу с дверью?
+8. Какой способ решения вы использовали?
+9. Хотелось ли попробовать другой способ?
+10. Что было самым приятным действием?
+11. Что было самым раздражающим?
+12. Хотели бы вы продолжить играть после завершения комнаты?
+
+---
+
+48. Главные риски прототипа
+
+Риск 1. Переходы через углы выглядят неестественно
+
+Решение:
+
+- отделить визуальную ориентацию от физики;
+- интерполировать нормаль;
+- ограничить скорость перехода;
+- использовать автоматическое позиционное исправление.
+
+Риск 2. Паутина слишком нестабильна
+
+Решение:
+
+- фиксированный timestep;
+- ограничение числа итераций;
+- ограничение сил;
+- отложенный разрыв;
+- запрет экстремально коротких нитей;
+- автоматическое удаление повреждённых элементов.
+
+Риск 3. Раскачивание сложно на сенсорном экране
+
+Решение:
+
+- swing assist;
+- coyote-помощь при отпускании;
+- широкий конус прицеливания;
+- замедление времени;
+- крупные точки крепления;
+- сохранение импульса.
+
+Риск 4. Виртуальные кнопки перекрывают сцену
+
+Решение:
+
+- учитывать safe area;
+- добавить прозрачность;
+- разрешить изменение масштаба;
+- использовать плавающий стик;
+- сместить важные объекты из нижних углов.
+
+Риск 5. Matter.js и собственная паутина конфликтуют
+
+Решение:
+
+- чёткий порядок обновления;
+- суммирование сил перед их применением;
+- один источник истины для каждой позиции;
+- ограничение импульсов;
+- диагностические проверки на "NaN".
+
+---
+
+49. Финальные критерии приёмки playable-сборки
+
+Управление
+
+- стик не теряет касание;
+- одновременный прыжок и движение работают;
+- паутина не блокирует прыжок случайно;
+- леворукая схема работает;
+- кнопки корректно масштабируются.
+
+Герой
+
+- движется по всем сторонам прямоугольной комнаты;
+- стабильно проходит углы;
+- не проваливается сквозь поверхность;
+- прыгает с пола, стены и потолка;
+- сохраняет контроль в воздухе;
+- безопасно прилипает к поверхности.
+
+Паутина
+
+- создаётся на статической поверхности;
+- создаётся на динамическом объекте;
+- поддерживает раскачивание;
+- изменяет длину;
+- удаляется;
+- разрывается;
+- отображает натяжение;
+- выдерживает 40 нитей без заметной деградации;
+- не создаёт "NaN".
+
+Комната
+
+- имеет начало;
+- имеет обучение;
+- имеет раскачивание;
+- имеет физическую задачу;
+- имеет контрольную точку;
+- имеет выход;
+- допускает минимум два решения.
+
+Мобильный веб
+
+- корректно работает в горизонтальном режиме;
+- учитывает вырезы и системные панели;
+- запускается как PWA;
+- работает офлайн;
+- корректно восстанавливается после сворачивания;
+- поддерживает 30 и 60 FPS.
+
+Производительность
+
+- среднее мобильное устройство: преимущественно 60 FPS;
+- слабое мобильное устройство: не менее 30 FPS;
+- нет постоянного роста памяти;
+- перезапуск комнаты занимает не более двух секунд;
+- первоначальная загрузка прототипа остаётся достаточно небольшой для мобильной сети.
+
+---
+
+50. Результат этапа
+
+После завершения этой спецификации команда должна получить одну рабочую ссылку на браузерную сборку, в которой игрок может:
+
+- управлять пауком;
+- ходить по любой поверхности;
+- прыгать;
+- выпускать паутину;
+- раскачиваться;
+- связывать предметы;
+- решать небольшую физическую задачу;
+- падать и быстро возвращаться;
+- завершить прототип.
+
+Главный вопрос итогового теста:
+
+«Достаточно ли приятно просто двигаться и играть с паутиной, чтобы захотеть провести в этом мире несколько часов?»
+
+Если ответ положительный, можно переходить к вертикальному срезу, вибрационной системе, первому противнику и полноценному художественному оформлению.
