@@ -261,7 +261,21 @@ export class ShellUi {
     slider(sound, 'Музыка и окружение', 'musicVolume', 0, 1, 0.05, percent);
     slider(sound, 'Эффекты', 'sfxVolume', 0, 1, 0.05, percent);
 
+    const screen = group('Экран');
+    this.addFullscreenRow(row(screen, 'Полноэкранный режим', 'Убирает панели браузера'));
+
     const controls = group('Управление');
+    segmented(
+      controls,
+      'Экранные кнопки',
+      'onScreenControls',
+      [
+        ['auto', 'Авто'],
+        ['on', 'Всегда'],
+        ['off', 'Скрыть'],
+      ],
+      'Стик и кнопки поверх игры. «Авто» — по наличию сенсора',
+    );
     toggle(controls, 'Леворукий режим', 'leftHanded', 'Стик справа, кнопки слева');
     toggle(controls, 'Фиксированный стик', 'fixedStick', 'Иначе стик появляется под пальцем');
     slider(
@@ -310,6 +324,49 @@ export class ShellUi {
       'highContrastWeb',
       'Толще и ярче на любом фоне',
     );
+  }
+
+  /**
+   * Переключатель полноэкранного режима.
+   *
+   * Значение не хранится в настройках: войти в полный экран можно только из
+   * жеста пользователя, поэтому «восстановить» состояние при загрузке всё
+   * равно нельзя. Переключатель отражает фактическое состояние документа и
+   * слушает `fullscreenchange` — выход по Esc обязан вернуть его обратно.
+   */
+  private addFullscreenRow(container: HTMLElement): void {
+    const button = document.createElement('button');
+    button.className = 'switch';
+    button.type = 'button';
+    button.setAttribute('role', 'switch');
+    button.setAttribute('aria-label', 'Полноэкранный режим');
+
+    const supported =
+      typeof document.documentElement.requestFullscreen === 'function' ||
+      typeof (
+        document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }
+      ).webkitRequestFullscreen === 'function';
+
+    const sync = () => button.setAttribute('aria-checked', String(isFullscreen()));
+    sync();
+
+    if (!supported) {
+      // iOS Safari не умеет разворачивать произвольный элемент. Честно
+      // говорим об этом вместо неработающей кнопки.
+      button.disabled = true;
+      button.style.opacity = '0.4';
+      const note = container.querySelector('.set-row__text i');
+      if (note) note.textContent = 'Браузер не поддерживает; добавьте игру на домашний экран';
+    } else {
+      button.addEventListener('click', () => {
+        void toggleFullscreen();
+        audio.playUi('tap');
+      });
+      document.addEventListener('fullscreenchange', sync);
+      document.addEventListener('webkitfullscreenchange', sync);
+    }
+
+    container.append(button);
   }
 
   // -------------------------------------------------------------- служебное
@@ -392,6 +449,39 @@ export class ShellUi {
     });
   }
 }
+
+type FullscreenDocument = Document & {
+  webkitFullscreenElement?: Element | null;
+  webkitExitFullscreen?: () => Promise<void>;
+};
+
+type FullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void>;
+};
+
+export const isFullscreen = (): boolean => {
+  const doc = document as FullscreenDocument;
+  return Boolean(doc.fullscreenElement ?? doc.webkitFullscreenElement);
+};
+
+/**
+ * Вход и выход из полноэкранного режима с учётом префиксов Safari.
+ * Ошибки гасятся: браузер вправе отказать (например, если жест «протух»),
+ * и падать из-за этого игра не должна.
+ */
+export const toggleFullscreen = async (): Promise<void> => {
+  const doc = document as FullscreenDocument;
+  const root = document.documentElement as FullscreenElement;
+  try {
+    if (isFullscreen()) {
+      await (doc.exitFullscreen?.() ?? doc.webkitExitFullscreen?.());
+    } else {
+      await (root.requestFullscreen?.({ navigationUI: 'hide' }) ?? root.webkitRequestFullscreen?.());
+    }
+  } catch (error) {
+    console.warn('[Silkbound] Полноэкранный режим недоступен', error);
+  }
+};
 
 export const formatTime = (ms: number): string => {
   const totalSeconds = Math.max(0, ms) / 1000;

@@ -12,6 +12,11 @@ export interface GameSettings {
 
   leftHanded: boolean;
   fixedStick: boolean;
+  /**
+   * Показ экранного стика и кнопок.
+   * `auto` — по наличию сенсора у устройства; `on`/`off` — принудительно.
+   */
+  onScreenControls: 'auto' | 'on' | 'off';
   aimAssist: number;
   autoAim: boolean;
 
@@ -41,6 +46,7 @@ export const defaultSettings: GameSettings = {
 
   leftHanded: false,
   fixedStick: false,
+  onScreenControls: 'auto',
   aimAssist: 0.5,
   autoAim: false,
 
