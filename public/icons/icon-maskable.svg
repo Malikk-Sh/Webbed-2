@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0%" stop-color="#173442" />
+      <stop offset="60%" stop-color="#0c1620" />
+      <stop offset="100%" stop-color="#05080c" />
+    </radialGradient>
+    <linearGradient id="silk" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#bfeaf6" />
+      <stop offset="100%" stop-color="#6fd8bb" />
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)" />
+
+  <!-- значок вписан в безопасную зону 40% радиуса -->
+  <g stroke="url(#silk)" fill="none" stroke-linecap="round" transform="translate(256 256) scale(0.62) translate(-256 -256)">
+    <g stroke-width="6" opacity="0.7">
+      <path d="M256 256 L256 74" />
+      <path d="M256 256 L385 127" />
+      <path d="M256 256 L438 256" />
+      <path d="M256 256 L385 385" />
+      <path d="M256 256 L256 438" />
+      <path d="M256 256 L127 385" />
+      <path d="M256 256 L74 256" />
+      <path d="M256 256 L127 127" />
+    </g>
+    <g stroke-width="8" opacity="0.95">
+      <path d="M256 132 Q300 152 344 168 Q328 212 344 256 Q328 300 344 344 Q300 360 256 380 Q212 360 168 344 Q184 300 168 256 Q184 212 168 168 Q212 152 256 132 Z" />
+      <path d="M256 196 Q286 210 302 226 Q292 242 302 256 Q292 270 302 286 Q286 302 256 316 Q226 302 210 286 Q220 270 210 256 Q220 242 210 226 Q226 210 256 196 Z" opacity="0.7" />
+    </g>
+  </g>
+</svg>
