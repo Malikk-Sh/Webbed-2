@@ -91,7 +91,7 @@ export class TouchInputAdapter {
 
   private layout: TouchButtonLayout[] = [];
   private readonly pointerOwners = new Map<number, 'stick' | TouchButtonLayout['id']>();
-  private renderScale = 1;
+  private uiScale = 1;
   private canvasRect: DOMRect | null = null;
   private leftHanded = false;
   private fixedStick = false;
@@ -116,14 +116,10 @@ export class TouchInputAdapter {
     window.removeEventListener('pointercancel', this.onPointerUp);
   }
 
-  setRenderScale(scale: number): void {
-    this.renderScale = scale;
-    this.canvasRect = null;
-  }
-
-  setPreferences(leftHanded: boolean, fixedStick: boolean): void {
+  setPreferences(leftHanded: boolean, fixedStick: boolean, uiScale: number): void {
     this.leftHanded = leftHanded;
     this.fixedStick = fixedStick;
+    this.uiScale = uiScale;
   }
 
   setFixedStickOrigin(x: number, y: number): void {
@@ -185,8 +181,8 @@ export class TouchInputAdapter {
   private toCanvas(event: PointerEvent): { x: number; y: number } {
     const rect = this.rect();
     return {
-      x: (event.clientX - rect.left) * this.renderScale,
-      y: (event.clientY - rect.top) * this.renderScale,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     };
   }
 
@@ -205,7 +201,7 @@ export class TouchInputAdapter {
   }
 
   private isStickHalf(x: number): boolean {
-    const half = (this.rect().width * this.renderScale) / 2;
+    const half = this.rect().width / 2;
     return this.leftHanded ? x > half : x < half;
   }
 
@@ -278,7 +274,7 @@ export class TouchInputAdapter {
   }
 
   private updateStickValue(): void {
-    const maxOffset = inputConfig.stickMaxOffset * this.renderScale;
+    const maxOffset = inputConfig.stickMaxOffset * this.uiScale;
     let dx = this.stick.pointerX - this.stick.originX;
     let dy = this.stick.pointerY - this.stick.originY;
     const dist = Math.hypot(dx, dy);

@@ -4,12 +4,6 @@ import { clamp } from '../../core/math/Interpolation';
 import { distance, type Vector2 } from '../../core/math/Vector2';
 import { closestPointOnSegment } from '../../core/math/Geometry';
 import type { CollisionWorld } from '../physics/CollisionWorld';
-import {
-  bodyToWorld,
-  forceToMatter,
-  pointVelocity,
-  type MatterBodyLike,
-} from '../physics/MatterUnits';
 import { WebGraph } from './WebGraph';
 import { WebSolver } from './WebSolver';
 import type {
@@ -29,8 +23,19 @@ export interface SeveredRibbon {
   lifetimeMs: number;
 }
 
+/**
+ * Минимум, который паутине нужен от твёрдого тела. Интерфейс намеренно уже
+ * реального `RigidBody`: тесты подставляют сюда простую заглушку.
+ */
+export interface WebAttachableBody {
+  readonly position: Vector2;
+  readonly mass: number;
+  toWorld(local: Vector2): Vector2;
+  velocityAt(world: Vector2): Vector2;
+}
+
 export interface WebBodyProvider {
-  getBody(bodyId: number): MatterBodyLike | null;
+  getBody(bodyId: number): WebAttachableBody | null;
   applyForce(bodyId: number, worldPoint: Vector2, force: Vector2): void;
 }
 
@@ -39,7 +44,7 @@ export interface SpiderAnchorProvider {
 }
 
 /**
- * Владелец всей паутины комнаты: граф, решатель, крепления к телам Matter,
+ * Владелец всей паутины комнаты: граф, решатель, крепления к твёрдым телам,
  * лимиты, разрывы и сериализация.
  */
 export class WebSystem {
@@ -208,7 +213,7 @@ export class WebSystem {
       case 'body': {
         const body = this.bodies.getBody(target.bodyId);
         if (!body) return null;
-        const world = bodyToWorld(body, target.localOffset);
+        const world = body.toWorld(target.localOffset);
         const node = this.graph.createNode('body-anchor', world, true);
         node.bodyId = target.bodyId;
         node.localOffset = { ...target.localOffset };
@@ -326,7 +331,7 @@ export class WebSystem {
       if (node.type === 'body-anchor' && node.bodyId !== undefined && node.localOffset) {
         const body = this.bodies.getBody(node.bodyId);
         if (body) {
-          const world = bodyToWorld(body, node.localOffset);
+          const world = body.toWorld(node.localOffset);
           node.position.x = world.x;
           node.position.y = world.y;
         }
@@ -362,7 +367,7 @@ export class WebSystem {
   }
 
   /**
-   * Передача нагрузки телам Matter (раздел 20.2 ТЗ).
+   * Передача нагрузки твёрдым телам (раздел 20.2 ТЗ).
    *
    * Нить моделируется как односторонняя пружина с демпфером: она тянет, но
    * никогда не толкает. Суммарная сила на тело ограничивается — без этого
@@ -397,7 +402,7 @@ export class WebSystem {
         if (!body) continue;
 
         const other = node === nodeA ? nodeB : nodeA;
-        const velocity = pointVelocity(body, node.position);
+        const velocity = body.velocityAt(node.position);
         const otherVelX = (other.position.x - other.previousPosition.x) * 60;
         const otherVelY = (other.position.y - other.previousPosition.y) * 60;
 
@@ -456,7 +461,7 @@ export class WebSystem {
         continue;
       }
       const point = { x: entry.px / entry.n, y: entry.py / entry.n };
-      this.bodies.applyForce(bodyId, point, forceToMatter({ x: fx, y: fy }));
+      this.bodies.applyForce(bodyId, point, { x: fx, y: fy });
     }
   }
 

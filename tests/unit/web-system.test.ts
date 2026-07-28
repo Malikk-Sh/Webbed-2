@@ -4,8 +4,7 @@ import { events } from '../../src/core/events/EventBus';
 import { rectanglePolygon } from '../../src/core/math/Geometry';
 import { CollisionWorld } from '../../src/game/physics/CollisionWorld';
 import { materials } from '../../src/game/physics/PhysicsMaterials';
-import { WebSystem } from '../../src/game/web/WebSystem';
-import type { MatterBodyLike } from '../../src/game/physics/MatterUnits';
+import { WebSystem, type WebAttachableBody } from '../../src/game/web/WebSystem';
 
 const buildWorld = (): CollisionWorld => {
   const world = new CollisionWorld();
@@ -18,14 +17,21 @@ const buildWorld = (): CollisionWorld => {
   return world;
 };
 
-const makeBody = (x: number, y: number, mass = 1): MatterBodyLike & { id: number } => ({
+/**
+ * Заглушка твёрдого тела: паутине от него нужны только положение, масса и
+ * два преобразования. Полный `RigidBody` здесь избыточен и мешал бы задавать
+ * телу произвольные координаты между шагами.
+ */
+const makeBody = (x: number, y: number, mass = 1): WebAttachableBody & { id: number } => ({
   id: 1,
   position: { x, y },
-  velocity: { x: 0, y: 0 },
   mass,
-  force: { x: 0, y: 0 },
-  angle: 0,
-  angularVelocity: 0,
+  toWorld(local) {
+    return { x: this.position.x + local.x, y: this.position.y + local.y };
+  },
+  velocityAt() {
+    return { x: 0, y: 0 };
+  },
 });
 
 describe('WebSystem', () => {

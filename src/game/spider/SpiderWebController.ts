@@ -18,7 +18,7 @@ import {
 import type { InputFrame } from '../input/InputFrame';
 import type { AnchorPoint } from '../level/PrototypeLevelLoader';
 import type { CollisionWorld } from '../physics/CollisionWorld';
-import { worldToBody } from '../physics/MatterUnits';
+import type { RigidBody } from '../../engine/physics/RigidBody';
 import type { WebSystem } from '../web/WebSystem';
 import type { WebAttachmentTarget } from '../web/WebTypes';
 import type { SpiderController } from './SpiderController';
@@ -58,7 +58,7 @@ export interface WebControllerDeps {
   collision: CollisionWorld;
   anchors: AnchorPoint[];
   /** Динамические тела, к которым разрешено крепить нить. */
-  getAttachableBodies: () => MatterJS.BodyType[];
+  getAttachableBodies: () => RigidBody[];
   aimAssistStrength: () => number;
   slowMotionEnabled: () => boolean;
 }
@@ -425,6 +425,21 @@ export class SpiderWebController {
     });
   }
 
+  /** Прицепление к точке уровня напрямую — используется браузерными тестами. */
+  testAttachToAnchor(anchor: { id: string; position: Vector2 }): boolean {
+    this.detachCooldownMs = 0;
+    this.attachTo({
+      point: { ...anchor.position },
+      kind: 'anchor',
+      assisted: false,
+      anchorId: anchor.id,
+      bodyId: null,
+      distance: 0,
+      score: 1,
+    });
+    return this.isTethered;
+  }
+
   /**
    * Ключевой момент управления: если Люма уже висит на нити и стоит на
    * поверхности, повторное нажатие закрепляет свободный конец здесь —
@@ -476,7 +491,7 @@ export class SpiderWebController {
       return {
         type: 'body',
         bodyId: body.id,
-        localOffset: worldToBody(body, candidate.point),
+        localOffset: body.toLocal(candidate.point),
       };
     }
     return {

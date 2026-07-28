@@ -1,12 +1,23 @@
-import Phaser from 'phaser';
 import { PALETTE, mixColor, shade } from '../../app/Palette';
 import { clamp01, createRandom, easeOutCubic } from '../../core/math/Interpolation';
-import type { Polygon } from '../../core/math/Geometry';
+import type { Polygon, Rect } from '../../core/math/Geometry';
 import type { Vector2 } from '../../core/math/Vector2';
 import type { LevelDecor, LevelDefinition } from '../level/LevelSchema';
 import type { LoadedLevel } from '../level/PrototypeLevelLoader';
 import { getMaterial } from '../physics/PhysicsMaterials';
 import { TEXTURES } from './TextureFactory';
+import type { Painter } from '../../engine/Painter';
+import { ShapeBuffer, type ShapeSink } from '../../engine/ShapeBuffer';
+import { textures } from '../../engine/TextureStore';
+
+interface LampHalo {
+  x: number;
+  y: number;
+  baseScale: number;
+  phase: number;
+  alpha: number;
+  scale: number;
+}
 
 interface EdgeTuft {
   x: number;
@@ -22,47 +33,30 @@ interface EdgeTuft {
 /**
  * Отрисовка геометрии комнаты и её декора.
  *
- * Статические слои рисуются один раз: платформы, мох, трещины и растения не
- * меняются, а перерисовка сотен фигур каждый кадр съедала бы весь бюджет CPU.
- * Каждый кадр обновляются только те элементы, которые действительно живут —
+ * Процедурная генерация платформ, мха, трещин и декора выполняется один раз, а
+ * получившиеся фигуры складываются в три буфера — задний план, тело платформ и
+ * детали. Каждый кадр они переигрываются с отсечением по экрану: перезапускать
+ * генератор случайных чисел на сотни фигур в кадре нельзя, а держать комнату
+ * растром — слишком дорого по памяти.
+ *
+ * Живыми остаются только те элементы, которые действительно шевелятся:
  * колышущаяся трава на кромках, свет ламп и точки крепления.
  */
 export class WorldRenderer {
-  private readonly backLayer: Phaser.GameObjects.Graphics;
-  private readonly solidLayer: Phaser.GameObjects.Graphics;
-  private readonly detailLayer: Phaser.GameObjects.Graphics;
-  private readonly liveLayer: Phaser.GameObjects.Graphics;
-  private readonly glowLayer: Phaser.GameObjects.Graphics;
-  private readonly lampSprites: Phaser.GameObjects.Image[] = [];
+  private readonly backLayer = new ShapeBuffer();
+  private readonly solidLayer = new ShapeBuffer();
+  private readonly detailLayer = new ShapeBuffer();
+  private readonly lamps: LampHalo[] = [];
 
   private readonly tufts: EdgeTuft[] = [];
   private windPhase = 0;
 
-  constructor(
-    scene: Phaser.Scene,
-    private readonly level: LoadedLevel,
-    baseDepth: number,
-  ) {
-    this.backLayer = scene.add.graphics().setDepth(baseDepth);
-    this.solidLayer = scene.add.graphics().setDepth(baseDepth + 1);
-    this.detailLayer = scene.add.graphics().setDepth(baseDepth + 2);
-    this.liveLayer = scene.add.graphics().setDepth(baseDepth + 3);
-    this.glowLayer = scene.add
-      .graphics()
-      .setDepth(baseDepth + 4)
-      .setBlendMode(Phaser.BlendModes.ADD);
-
+  constructor(private readonly level: LoadedLevel) {
     this.drawStatic();
-    this.createLamps(scene, level.definition, baseDepth + 5);
-  }
-
-  destroy(): void {
-    this.backLayer.destroy();
-    this.solidLayer.destroy();
-    this.detailLayer.destroy();
-    this.liveLayer.destroy();
-    this.glowLayer.destroy();
-    for (const lamp of this.lampSprites) lamp.destroy();
+    this.createLamps(level.definition);
+    this.backLayer.seal();
+    this.solidLayer.seal();
+    this.detailLayer.seal();
   }
 
   // ------------------------------------------------------------- статика
@@ -71,9 +65,6 @@ export class WorldRenderer {
     const back = this.backLayer;
     const solid = this.solidLayer;
     const detail = this.detailLayer;
-    back.clear();
-    solid.clear();
-    detail.clear();
 
     for (const decor of this.level.definition.decor ?? []) {
       if (decor.layer === 0) this.drawDecor(back, decor);
@@ -89,8 +80,8 @@ export class WorldRenderer {
   }
 
   private drawPlatform(
-    solid: Phaser.GameObjects.Graphics,
-    detail: Phaser.GameObjects.Graphics,
+    solid: ShapeSink,
+    detail: ShapeSink,
     polygon: Polygon,
     materialId: string,
     id: string,
@@ -172,7 +163,7 @@ export class WorldRenderer {
 
   /** Заливка горизонтальной полосы многоугольника — даёт мягкий градиент. */
   private fillPolygonBand(
-    g: Phaser.GameObjects.Graphics,
+    g: ShapeSink,
     points: Vector2[],
     y0: number,
     y1: number,
@@ -196,7 +187,7 @@ export class WorldRenderer {
     polygon: Polygon,
     mossiness: number,
     random: () => number,
-    detail: Phaser.GameObjects.Graphics,
+    detail: ShapeSink,
   ): void {
     if (mossiness <= 0.02) return;
     const points = polygon.points;
@@ -267,7 +258,7 @@ export class WorldRenderer {
 
   // --------------------------------------------------------------- декор
 
-  private drawDecor(g: Phaser.GameObjects.Graphics, decor: LevelDecor): void {
+  private drawDecor(g: ShapeSink, decor: LevelDecor): void {
     const random = createRandom((decor.seed ?? 1) * 7919 + 31);
     const scale = decor.scale ?? 1;
 
@@ -297,7 +288,7 @@ export class WorldRenderer {
   }
 
   private drawPot(
-    g: Phaser.GameObjects.Graphics,
+    g: ShapeSink,
     x: number,
     y: number,
     scale: number,
@@ -352,7 +343,7 @@ export class WorldRenderer {
   }
 
   private drawPlant(
-    g: Phaser.GameObjects.Graphics,
+    g: ShapeSink,
     x: number,
     y: number,
     scale: number,
@@ -386,7 +377,7 @@ export class WorldRenderer {
   }
 
   private drawVine(
-    g: Phaser.GameObjects.Graphics,
+    g: ShapeSink,
     x: number,
     y: number,
     scale: number,
@@ -417,7 +408,7 @@ export class WorldRenderer {
   }
 
   private drawRoot(
-    g: Phaser.GameObjects.Graphics,
+    g: ShapeSink,
     x: number,
     y: number,
     scale: number,
@@ -445,7 +436,7 @@ export class WorldRenderer {
   }
 
   private drawGlassPane(
-    g: Phaser.GameObjects.Graphics,
+    g: ShapeSink,
     x: number,
     y: number,
     scale: number,
@@ -487,20 +478,18 @@ export class WorldRenderer {
     }
   }
 
-  private createLamps(scene: Phaser.Scene, definition: LevelDefinition, depth: number): void {
+  private createLamps(definition: LevelDefinition): void {
     for (const decor of definition.decor ?? []) {
       if (decor.type !== 'lamp') continue;
       const scale = decor.scale ?? 1;
-      const halo = scene.add
-        .image(decor.x, decor.y + 34 * scale, TEXTURES.glowSoft)
-        .setDepth(depth)
-        .setBlendMode(Phaser.BlendModes.ADD)
-        .setTint(PALETTE.sunWarm)
-        .setAlpha(0.3)
-        .setScale(1.5 * scale);
-      halo.setData('phase', Math.random() * Math.PI * 2);
-      halo.setData('baseScale', 1.5 * scale);
-      this.lampSprites.push(halo);
+      this.lamps.push({
+        x: decor.x,
+        y: decor.y + 34 * scale,
+        baseScale: 1.5 * scale,
+        phase: Math.random() * Math.PI * 2,
+        alpha: 0.3,
+        scale: 1.5 * scale,
+      });
 
       // Корпус лампы рисуется в статичный слой.
       const g = this.detailLayer;
@@ -524,22 +513,40 @@ export class WorldRenderer {
 
   // ------------------------------------------------------------- анимация
 
-  update(deltaSeconds: number, time: number, camera: Phaser.Cameras.Scene2D.Camera): void {
+  update(deltaSeconds: number, time: number): void {
     this.windPhase += deltaSeconds;
-    const g = this.liveLayer;
-    g.clear();
 
-    const view = camera.worldView;
+    // Старые лампы оранжереи мерцают неровно: две несоизмеримые синусоиды
+    // дают биение, которое глаз не считывает как период.
+    for (const lamp of this.lamps) {
+      const flicker =
+        0.78 + 0.14 * Math.sin(time / 260 + lamp.phase) + 0.08 * Math.sin(time / 91 + lamp.phase * 3);
+      lamp.alpha = 0.26 * flicker;
+      lamp.scale = lamp.baseScale * (0.94 + flicker * 0.08);
+    }
+  }
+
+  /** Неизменные слои: задний план, тело платформ, детали. */
+  drawStaticLayers(painter: Painter, view: Rect): void {
+    this.backLayer.replay(painter, view);
+    this.solidLayer.replay(painter, view);
+    this.detailLayer.replay(painter, view);
+  }
+
+  /** Трава на кромках — единственное, что здесь пересчитывается каждый кадр. */
+  drawGrass(painter: Painter, view: Rect): void {
+    const right = view.x + view.width;
+    const bottom = view.y + view.height;
     // Порыв ветра пробегает по комнате слева направо.
-    const gustCentre = ((this.windPhase * 260) % (this.level.definition.worldBounds.width + 1400)) - 700;
+    const gustCentre =
+      ((this.windPhase * 260) % (this.level.definition.worldBounds.width + 1400)) - 700;
 
     for (const tuft of this.tufts) {
-      if (tuft.x < view.x - 60 || tuft.x > view.right + 60) continue;
-      if (tuft.y < view.y - 80 || tuft.y > view.bottom + 80) continue;
+      if (tuft.x < view.x - 60 || tuft.x > right + 60) continue;
+      if (tuft.y < view.y - 80 || tuft.y > bottom + 80) continue;
 
       const gust = clamp01(1 - Math.abs(tuft.x - gustCentre) / 420);
-      const sway =
-        Math.sin(this.windPhase * 1.6 + tuft.phase) * 0.12 + tuft.lean + gust * 0.55;
+      const sway = Math.sin(this.windPhase * 1.6 + tuft.phase) * 0.12 + tuft.lean + gust * 0.55;
 
       // Травинка гнётся по дуге вдоль поверхности, а не ломается углом.
       const tangentX = -tuft.ny;
@@ -550,52 +557,47 @@ export class WorldRenderer {
       const midY = tuft.y + tuft.ny * tuft.height * 0.55 + tangentY * sway * tuft.height * 0.22;
 
       // Два прохода: широкое основание и тонкий кончик — травинка сужается.
-      g.lineStyle(2.2, tuft.color, 0.85);
-      g.beginPath();
-      g.moveTo(tuft.x, tuft.y);
-      g.lineTo(midX, midY);
-      g.strokePath();
-      g.lineStyle(1.2, tuft.color, 0.9);
-      g.beginPath();
-      g.moveTo(midX, midY);
-      g.lineTo(tipX, tipY);
-      g.strokePath();
-    }
-
-    // Пульсация ламп.
-    const glow = this.glowLayer;
-    glow.clear();
-    for (const lamp of this.lampSprites) {
-      const phase = lamp.getData('phase') as number;
-      const baseScale = lamp.getData('baseScale') as number;
-      // Старые лампы оранжереи мерцают неровно.
-      const flicker =
-        0.78 + 0.14 * Math.sin(time / 260 + phase) + 0.08 * Math.sin(time / 91 + phase * 3);
-      lamp.setAlpha(0.26 * flicker);
-      lamp.setScale(baseScale * (0.94 + flicker * 0.08));
+      painter.lineStyle(2.2, tuft.color, 0.85);
+      painter.beginPath();
+      painter.moveTo(tuft.x, tuft.y);
+      painter.lineTo(midX, midY);
+      painter.strokePath();
+      painter.lineStyle(1.2, tuft.color, 0.9);
+      painter.beginPath();
+      painter.moveTo(midX, midY);
+      painter.lineTo(tipX, tipY);
+      painter.strokePath();
     }
   }
 
-  /** Точки крепления: пульсирующие узелки, к которым тянется прицел. */
-  renderAnchors(time: number): void {
-    const g = this.glowLayer;
+  /**
+   * Светящийся слой: ореолы ламп и точки крепления. Вызывается сценой уже с
+   * включённым режимом сложения.
+   */
+  drawGlow(painter: Painter, time: number): void {
+    const halo = textures.tint(TEXTURES.glowSoft, PALETTE.sunWarm);
+    for (const lamp of this.lamps) {
+      const size = halo.width * lamp.scale;
+      painter.drawTexture(halo.canvas, lamp.x, lamp.y, size, size, 0, lamp.alpha);
+    }
+
     for (const anchor of this.level.anchors) {
       const pulse = 0.5 + 0.5 * Math.sin(time / 760 + anchor.position.x * 0.01);
       const highlight = anchor.highlight;
       const color = highlight > 0.5 ? PALETTE.anchorActive : PALETTE.anchorIdle;
       const radius = 5 + pulse * 1.6 + highlight * 4;
 
-      g.fillStyle(color, 0.1 + highlight * 0.16);
-      g.fillCircle(anchor.position.x, anchor.position.y, radius * 3.4);
-      g.fillStyle(color, 0.55 + highlight * 0.35);
-      g.fillCircle(anchor.position.x, anchor.position.y, radius);
-      g.fillStyle(0xffffff, 0.75);
-      g.fillCircle(anchor.position.x, anchor.position.y, radius * 0.35);
+      painter.fillStyle(color, 0.1 + highlight * 0.16);
+      painter.fillCircle(anchor.position.x, anchor.position.y, radius * 3.4);
+      painter.fillStyle(color, 0.55 + highlight * 0.35);
+      painter.fillCircle(anchor.position.x, anchor.position.y, radius);
+      painter.fillStyle(0xffffff, 0.75);
+      painter.fillCircle(anchor.position.x, anchor.position.y, radius * 0.35);
 
       // Кольцо-указатель вокруг подсвеченной точки.
       if (highlight > 0.02) {
-        g.lineStyle(1.6, color, highlight * 0.8);
-        g.strokeCircle(anchor.position.x, anchor.position.y, 13 + (1 - pulse) * 4);
+        painter.lineStyle(1.6, color, highlight * 0.8);
+        painter.strokeCircle(anchor.position.x, anchor.position.y, 13 + (1 - pulse) * 4);
       }
     }
   }

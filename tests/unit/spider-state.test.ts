@@ -2,16 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { SpiderStateMachine } from '../../src/game/spider/SpiderStateMachine';
 import { STATE_PRIORITY } from '../../src/game/spider/SpiderState';
 import { EventBus } from '../../src/core/events/EventBus';
-import {
-  FORCE_TO_ACCELERATION,
-  accelerationToForce,
-  bodyToWorld,
-  getVelocity,
-  pointVelocity,
-  velocityToMatter,
-  worldToBody,
-} from '../../src/game/physics/MatterUnits';
-import { PHYSICS } from '../../src/app/GameConfig';
 
 describe('SpiderStateMachine', () => {
   it('стартует в Spawn', () => {
@@ -91,65 +81,5 @@ describe('EventBus', () => {
     bus.emit('web:cleared', {});
     expect(reached).toBe(true);
     spy.mockRestore();
-  });
-});
-
-describe('MatterUnits', () => {
-  it('переводит скорость в единицы в секунду и обратно', () => {
-    const body = {
-      position: { x: 0, y: 0 },
-      velocity: { x: 2, y: -3 },
-      mass: 1,
-      force: { x: 0, y: 0 },
-      angle: 0,
-      angularVelocity: 0,
-    };
-    expect(getVelocity(body)).toEqual({ x: 120, y: -180 });
-    expect(velocityToMatter({ x: 120, y: -180 })).toEqual({ x: 2, y: -3 });
-  });
-
-  it('константа силы согласована с гравитацией из конфигурации', () => {
-    // Matter добавляет телу силу mass · gravity.y · gravity.scale.
-    // Через FORCE_TO_ACCELERATION она обязана дать ровно PHYSICS.gravity.
-    const gravityY = PHYSICS.gravity / 1000;
-    const forcePerMass = gravityY * PHYSICS.matterGravityScale;
-    expect(forcePerMass * FORCE_TO_ACCELERATION).toBeCloseTo(PHYSICS.gravity, 6);
-  });
-
-  it('переводит ускорение в силу с учётом массы', () => {
-    const force = accelerationToForce({ x: 0, y: PHYSICS.gravity }, 2.4);
-    expect((force.y * FORCE_TO_ACCELERATION) / 2.4).toBeCloseTo(PHYSICS.gravity, 6);
-  });
-
-  it('переводит локальные координаты тела в мировые и обратно', () => {
-    const body = {
-      position: { x: 100, y: 50 },
-      velocity: { x: 0, y: 0 },
-      mass: 1,
-      force: { x: 0, y: 0 },
-      angle: Math.PI / 2,
-      angularVelocity: 0,
-    };
-    const world = bodyToWorld(body, { x: 10, y: 0 });
-    expect(world.x).toBeCloseTo(100, 5);
-    expect(world.y).toBeCloseTo(60, 5);
-    const local = worldToBody(body, world);
-    expect(local.x).toBeCloseTo(10, 5);
-    expect(local.y).toBeCloseTo(0, 5);
-  });
-
-  it('учитывает вращение в скорости точки тела', () => {
-    const body = {
-      position: { x: 0, y: 0 },
-      velocity: { x: 0, y: 0 },
-      mass: 1,
-      force: { x: 0, y: 0 },
-      angle: 0,
-      angularVelocity: 1 / 60,
-    };
-    // Точка на 10 единиц правее центра при вращении 1 рад/с движется вниз.
-    const velocity = pointVelocity(body, { x: 10, y: 0 });
-    expect(velocity.x).toBeCloseTo(0, 5);
-    expect(velocity.y).toBeCloseTo(10, 5);
   });
 });

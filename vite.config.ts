@@ -19,14 +19,7 @@ export default defineConfig({
   build: {
     target: 'es2020',
     sourcemap: true,
-    chunkSizeWarningLimit: 1600,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          phaser: ['phaser'],
-        },
-      },
-    },
+    chunkSizeWarningLimit: 700,
   },
   server: {
     host: true,

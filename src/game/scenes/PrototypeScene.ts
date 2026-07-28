@@ -1,4 +1,3 @@
-import Phaser from 'phaser';
 import {
   PHYSICS,
   qualityProfiles,
@@ -11,9 +10,14 @@ import type { RunStats } from '../../core/events/GameEvents';
 import { clamp, clamp01, damp } from '../../core/math/Interpolation';
 import { rectContains } from '../../core/math/Geometry';
 import { length, type Vector2 } from '../../core/math/Vector2';
+import type { Camera2D } from '../../engine/Camera2D';
+import type { Painter } from '../../engine/Painter';
+import type { Surface } from '../../engine/Surface';
+import { cssColor } from '../../engine/Color';
+import { PhysicsWorld } from '../../engine/physics/PhysicsWorld';
+import { circleBody, type RigidBody } from '../../engine/physics/RigidBody';
 import { audio } from '../audio/AudioEngine';
 import { CameraController } from '../camera/CameraController';
-import { MatterLib } from '../physics/MatterLib';
 import type { InputSystem } from '../input/InputSystem';
 import levelData from '../../content/levels/prototype-room.json';
 import type { LevelDefinition } from '../level/LevelSchema';
@@ -22,7 +26,6 @@ import type { RigidBodySnapshot } from '../objects/LevelObjects';
 import { BackgroundRenderer } from '../render/BackgroundRenderer';
 import { ObjectRenderer } from '../render/ObjectRenderer';
 import { ParticleField } from '../render/ParticleField';
-import { createRuntimeTextures } from '../render/TextureFactory';
 import { WorldRenderer } from '../render/WorldRenderer';
 import { settingsRepository } from '../save/SettingsRepository';
 import { SpiderController } from '../spider/SpiderController';
@@ -36,16 +39,6 @@ import type { PrototypeHud } from '../ui/PrototypeHud';
 import { AimOverlay } from '../render/AimOverlay';
 import { DebugOverlay } from '../../core/debug/DebugOverlay';
 
-const DEPTH = {
-  background: -1000,
-  worldBack: -100,
-  objects: 0,
-  webBack: 40,
-  spider: 60,
-  particles: 90,
-  aim: 120,
-} as const;
-
 interface CheckpointState {
   checkpointId: string;
   position: Vector2;
@@ -54,39 +47,58 @@ interface CheckpointState {
   weights: Record<string, RigidBodySnapshot>;
 }
 
+export interface SceneDeps {
+  surface: Surface;
+  camera: Camera2D;
+  painter: Painter;
+  input: InputSystem;
+  hud: PrototypeHud;
+  getFps: () => number;
+  onComplete: (stats: RunStats) => void;
+  onPauseRequested: () => void;
+}
+
 /**
  * Основная игровая сцена.
  *
- * Здесь собирается порядок кадра из раздела 6.2 ТЗ: ввод → герой → шаг Matter →
+ * Здесь собирается порядок кадра из раздела 6.2 ТЗ: ввод → герой → шаг физики →
  * крепления паутины → решатель → триггеры → камера → отрисовка. Симуляция
  * идёт фиксированным шагом 1/60 с ограничением накопления, поэтому просадка
  * кадров замедляет картинку, но не меняет физику.
+ *
+ * Порядок слоёв больше не задаётся числами глубины: рисование идёт сверху вниз
+ * по коду метода `render`, и что вызвано позже — то и лежит выше.
  */
-export class PrototypeScene extends Phaser.Scene {
-  private inputSystem!: InputSystem;
-  private hud!: PrototypeHud;
+export class PrototypeScene {
+  private readonly surface: Surface;
+  private readonly camera: Camera2D;
+  private readonly painter: Painter;
+  private readonly inputSystem: InputSystem;
+  private readonly hud: PrototypeHud;
+  private readonly getFps: () => number;
 
-  private level!: LoadedLevel;
-  private web!: WebSystem;
-  private spider!: SpiderController;
-  private webController!: SpiderWebController;
-  private stateMachine = new SpiderStateMachine();
+  private readonly physics: PhysicsWorld;
+  private readonly level: LoadedLevel;
+  private readonly web: WebSystem;
+  private readonly spider: SpiderController;
+  private readonly webController: SpiderWebController;
+  private readonly stateMachine = new SpiderStateMachine();
 
-  private cameraController!: CameraController;
-  private background!: BackgroundRenderer;
-  private worldRenderer!: WorldRenderer;
-  private objectRenderer!: ObjectRenderer;
-  private webRenderer!: WebRenderer;
-  private spiderVisual!: SpiderVisual;
-  private particles!: ParticleField;
-  private aimOverlay!: AimOverlay;
-  private debugOverlay!: DebugOverlay;
+  private readonly cameraController: CameraController;
+  private readonly background: BackgroundRenderer;
+  private readonly worldRenderer: WorldRenderer;
+  private readonly objectRenderer: ObjectRenderer;
+  private readonly webRenderer: WebRenderer;
+  private readonly spiderVisual: SpiderVisual;
+  private readonly particles = new ParticleField();
+  private readonly aimOverlay = new AimOverlay();
+  private readonly debugOverlay = new DebugOverlay();
 
-  private spiderBody!: MatterJS.BodyType;
+  private readonly spiderBody: RigidBody;
   private accumulatorMs = 0;
-  private simulatedTimeMs = 0;
   private running = false;
   private completed = false;
+  private completionTimerMs = -1;
 
   private checkpoint: CheckpointState | null = null;
   private activatedTriggers = new Set<string>();
@@ -94,61 +106,44 @@ export class PrototypeScene extends Phaser.Scene {
   private respawnTimerMs = 0;
   private inputProtectionMs = 0;
 
-  private stats: RunStats = {
-    timeMs: 0,
-    falls: 0,
-    strandsCreated: 0,
-    strandsBroken: 0,
-    peakStrands: 0,
-    jumps: 0,
-    swingTimeMs: 0,
-  };
+  private stats: RunStats = emptyStats();
 
   private timeScale = 1;
   private smoothedTimeScale = 1;
-  private onComplete: (stats: RunStats) => void = () => {};
-  private onPauseRequested: () => void = () => {};
+  private readonly onComplete: (stats: RunStats) => void;
+  private readonly onPauseRequested: () => void;
   private disposers: (() => void)[] = [];
 
-  constructor() {
-    super({ key: 'PrototypeScene', active: false });
-  }
+  constructor(deps: SceneDeps) {
+    this.surface = deps.surface;
+    this.camera = deps.camera;
+    this.painter = deps.painter;
+    this.inputSystem = deps.input;
+    this.hud = deps.hud;
+    this.getFps = deps.getFps;
+    this.onComplete = deps.onComplete;
+    this.onPauseRequested = deps.onPauseRequested;
 
-  configure(options: {
-    input: InputSystem;
-    hud: PrototypeHud;
-    onComplete: (stats: RunStats) => void;
-    onPauseRequested: () => void;
-  }): void {
-    this.inputSystem = options.input;
-    this.hud = options.hud;
-    this.onComplete = options.onComplete;
-    this.onPauseRequested = options.onPauseRequested;
-  }
-
-  create(): void {
-    createRuntimeTextures(this.textures);
-
-    this.matter.world.setGravity(0, PHYSICS.gravity / 1000, PHYSICS.matterGravityScale);
-    // Свой аккумулятор: Phaser не даёт гарантий по числу шагов за кадр,
-    // а физике паутины нужен ровный 1/60 и ограничение догоняющих шагов.
-    this.matter.world.autoUpdate = false;
-
-    this.level = loadLevel(levelData as unknown as LevelDefinition, this.matter.world);
-
-    this.spiderBody = MatterLib.Bodies.circle(0, 0, spiderBodyConfig.radius, {
-      friction: spiderBodyConfig.friction,
-      frictionAir: spiderBodyConfig.frictionAir,
-      restitution: spiderBodyConfig.restitution,
-      label: 'spider',
-      inertia: Infinity,
-      // Персонажем управляет игрок, и заснуть он не вправе никогда. Порог
-      // задан на самом теле, чтобы гарантия пережила любые изменения
-      // общей настройки засыпания в конфигурации мира.
-      sleepThreshold: Infinity,
+    this.physics = new PhysicsWorld({
+      gravityY: PHYSICS.gravity,
+      velocityIterations: PHYSICS.velocityIterations,
+      positionIterations: PHYSICS.positionIterations,
     });
-    MatterLib.Body.setMass(this.spiderBody, spiderBodyConfig.mass);
-    MatterLib.Composite.add(this.matter.world.localWorld, this.spiderBody);
+
+    this.level = loadLevel(levelData as unknown as LevelDefinition, this.physics);
+
+    this.spiderBody = this.physics.add(
+      circleBody(0, 0, spiderBodyConfig.radius, {
+        mass: spiderBodyConfig.mass,
+        friction: spiderBodyConfig.friction,
+        frictionAir: spiderBodyConfig.frictionAir,
+        restitution: spiderBodyConfig.restitution,
+        label: 'spider',
+        // Персонаж не вращается: «верх» ему задаёт опорная нормаль, а не
+        // угловая скорость, накопленная от столкновений.
+        fixedRotation: true,
+      }),
+    );
 
     this.spider = new SpiderController({
       body: this.spiderBody,
@@ -160,10 +155,7 @@ export class PrototypeScene extends Phaser.Scene {
       this.level.collision,
       {
         getBody: (bodyId) => this.findBody(bodyId),
-        applyForce: (bodyId, point, force) => {
-          const body = this.findBody(bodyId);
-          if (body) MatterLib.Body.applyForce(body as MatterJS.BodyType, point, force);
-        },
+        applyForce: (bodyId, point, force) => this.findBody(bodyId)?.applyForce(point, force),
       },
       { getSpiderPosition: () => this.spider.position },
     );
@@ -179,25 +171,21 @@ export class PrototypeScene extends Phaser.Scene {
       slowMotionEnabled: () => settingsRepository.current.slowMotionAiming,
     });
 
-    this.background = new BackgroundRenderer(this, this.level.definition, DEPTH.background);
-    this.worldRenderer = new WorldRenderer(this, this.level, DEPTH.worldBack);
-    this.objectRenderer = new ObjectRenderer(this, this.level, DEPTH.objects);
-    this.webRenderer = new WebRenderer(this, this.web, DEPTH.webBack);
-    this.spiderVisual = new SpiderVisual(this, this.spider, this.level.collision, DEPTH.spider);
-    this.particles = new ParticleField(this, DEPTH.particles);
-    this.aimOverlay = new AimOverlay(this, DEPTH.aim);
-    this.debugOverlay = new DebugOverlay(this, DEPTH.aim + 10);
+    this.background = new BackgroundRenderer(this.level.definition);
+    this.worldRenderer = new WorldRenderer(this.level);
+    this.objectRenderer = new ObjectRenderer(this.level);
+    this.webRenderer = new WebRenderer(this.web);
+    this.spiderVisual = new SpiderVisual(this.spider, this.level.collision);
 
     this.cameraController = new CameraController(
-      this.cameras.main,
+      this.camera,
       this.level.definition.cameraBounds,
     );
-    this.cameras.main.setBackgroundColor(PALETTE.skyTop);
 
     this.bindEvents();
     this.applyQuality();
-    this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
-    this.handleResize();
+    this.disposers.push(this.surface.onResize((surface) => this.handleResize(surface)));
+    this.handleResize(this.surface);
 
     this.hud.setDiagnosticsSource(() => this.buildDiagnostics());
 
@@ -208,17 +196,9 @@ export class PrototypeScene extends Phaser.Scene {
     (window as unknown as { silkboundScene?: PrototypeScene }).silkboundScene = this;
   }
 
-  shutdown(): void {
+  destroy(): void {
     for (const dispose of this.disposers) dispose();
     this.disposers = [];
-    this.scale.off(Phaser.Scale.Events.RESIZE, this.handleResize, this);
-    this.background.destroy();
-    this.worldRenderer.destroy();
-    this.objectRenderer.destroy();
-    this.webRenderer.destroy();
-    this.spiderVisual.destroy();
-    this.particles.destroy();
-    this.aimOverlay.destroy();
     this.debugOverlay.destroy();
   }
 
@@ -296,20 +276,20 @@ export class PrototypeScene extends Phaser.Scene {
     );
   }
 
-  private findBody(bodyId: number): MatterJS.BodyType | null {
+  private findBody(bodyId: number): RigidBody | null {
     for (const crate of this.level.crates) if (crate.body.id === bodyId) return crate.body;
     for (const weight of this.level.weights) if (weight.body.id === bodyId) return weight.body;
     return null;
   }
 
-  private attachableBodies(): MatterJS.BodyType[] {
-    const bodies: MatterJS.BodyType[] = [];
+  private attachableBodies(): RigidBody[] {
+    const bodies: RigidBody[] = [];
     for (const crate of this.level.crates) bodies.push(crate.body);
     for (const weight of this.level.weights) bodies.push(weight.body);
     return bodies;
   }
 
-  private applyQuality(): void {
+  applyQuality(): void {
     const settings = settingsRepository.current;
     const profile = qualityProfiles[settings.quality];
     const particleBudget = settings.reducedParticles
@@ -328,8 +308,9 @@ export class PrototypeScene extends Phaser.Scene {
     this.cameraController.setShakeEnabled(settings.cameraShake);
   }
 
-  private handleResize(): void {
-    this.cameraController.resize(this.scale.width, this.scale.height);
+  private handleResize(surface: Surface): void {
+    this.cameraController.resize(surface.width, surface.height);
+    this.hud.resize(surface.width, surface.height);
   }
 
   // ------------------------------------------------------------- жизненный цикл
@@ -348,15 +329,8 @@ export class PrototypeScene extends Phaser.Scene {
     this.particles.clear();
     this.activatedTriggers.clear();
     this.completed = false;
-    this.stats = {
-      timeMs: 0,
-      falls: 0,
-      strandsCreated: 0,
-      strandsBroken: 0,
-      peakStrands: 0,
-      jumps: 0,
-      swingTimeMs: 0,
-    };
+    this.completionTimerMs = -1;
+    this.stats = emptyStats();
 
     for (const crate of this.level.crates) crate.restore();
     for (const weight of this.level.weights) weight.restore();
@@ -491,11 +465,11 @@ export class PrototypeScene extends Phaser.Scene {
 
   // -------------------------------------------------------------- игровой цикл
 
-  override update(time: number, delta: number): void {
-    const frameDelta = Math.min(delta, 100);
+  frame(deltaMs: number, timeMs: number): void {
+    const frameDelta = Math.min(deltaMs, 100);
 
     if (!this.running) {
-      this.renderVisuals(frameDelta / 1000, time);
+      this.render(frameDelta / 1000, timeMs);
       return;
     }
 
@@ -528,7 +502,6 @@ export class PrototypeScene extends Phaser.Scene {
     while (this.accumulatorMs >= PHYSICS.fixedDeltaMs && steps < PHYSICS.maxAccumulatedSteps) {
       this.fixedStep(PHYSICS.fixedDeltaMs / 1000, input);
       this.accumulatorMs -= PHYSICS.fixedDeltaMs;
-      this.simulatedTimeMs += PHYSICS.fixedDeltaMs;
       steps++;
     }
 
@@ -537,8 +510,9 @@ export class PrototypeScene extends Phaser.Scene {
     this.stats.peakStrands = Math.max(this.stats.peakStrands, this.web.peakStrandCount);
 
     this.updateRespawn(frameDelta);
+    this.updateCompletion(frameDelta);
     this.updateCamera(frameDelta / 1000, input);
-    this.renderVisuals(frameDelta / 1000, time);
+    this.render(frameDelta / 1000, timeMs);
     this.updateAudioMix();
   }
 
@@ -555,10 +529,8 @@ export class PrototypeScene extends Phaser.Scene {
       this.webController.release(true);
     }
 
-    // 2. Шаг Matter: столкновения тел и переноска ящиков.
-    // Именно `step`, а не `update`: последний уважает `autoUpdate` и при
-    // выключенном автообновлении молча ничего не делает.
-    this.matter.world.step(PHYSICS.fixedDeltaMs);
+    // 2. Шаг физики: столкновения тел и переноска ящиков.
+    this.physics.step(deltaSeconds);
 
     // 3. Паутина: крепления, решатель, натяжение, разрывы.
     this.web.fixedUpdate(deltaSeconds);
@@ -567,10 +539,7 @@ export class PrototypeScene extends Phaser.Scene {
     this.webController.fixedUpdate(deltaSeconds, effectiveInput);
 
     // 5. Механизмы уровня.
-    const bodies = MatterLib.Composite.allBodies(
-      this.matter.world.localWorld,
-    ) as MatterJS.BodyType[];
-    for (const plate of this.level.plates) plate.fixedUpdate(deltaSeconds, bodies);
+    for (const plate of this.level.plates) plate.fixedUpdate(deltaSeconds, this.physics.bodies);
     for (const door of this.level.doors) {
       const plate = this.level.plates.find((p) => p.id === door.controlledBy);
       door.fixedUpdate(deltaSeconds, plate?.isActive() ?? false);
@@ -681,7 +650,16 @@ export class PrototypeScene extends Phaser.Scene {
     audio.playSuccess();
     this.cameraController.shake(0.08, 260);
     events.emit('level:completed', { stats: this.stats });
-    this.time.delayedCall(900, () => this.onComplete(this.stats));
+    // Пауза перед итогами: искры успевают долететь, а игрок — увидеть выход.
+    this.completionTimerMs = 900;
+  }
+
+  private updateCompletion(deltaMs: number): void {
+    if (this.completionTimerMs < 0) return;
+    this.completionTimerMs -= deltaMs;
+    if (this.completionTimerMs > 0) return;
+    this.completionTimerMs = -1;
+    this.onComplete(this.stats);
   }
 
   private updateCamera(deltaSeconds: number, input: ReturnType<InputSystem['update']>): void {
@@ -696,34 +674,80 @@ export class PrototypeScene extends Phaser.Scene {
     );
   }
 
-  private renderVisuals(deltaSeconds: number, time: number): void {
-    const camera = this.cameras.main;
-    this.background.update(deltaSeconds, time, camera);
-    this.worldRenderer.update(deltaSeconds, time, camera);
-    this.worldRenderer.renderAnchors(time);
-    this.objectRenderer.update(time);
-    this.webRenderer.render(time, camera.worldView);
+  // ------------------------------------------------------------- отрисовка
+
+  /**
+   * Кадр целиком: фон со своими планами, мир, объекты, паутина, герой,
+   * частицы, прицел, отладка — и поверх всего экранный интерфейс.
+   */
+  private render(deltaSeconds: number, time: number): void {
+    const painter = this.painter;
+    const ratio = this.surface.pixelRatio;
+
+    this.surface.clear(cssColor(PALETTE.skyTop, 1));
+    painter.bind(this.surface.ctx);
+
+    // --- фон со своими множителями параллакса ---------------------------
+    this.background.update(deltaSeconds, time);
+    this.background.draw(
+      painter,
+      this.camera,
+      ratio,
+      time,
+      this.surface.width,
+      this.surface.height,
+    );
+
+    // --- мир --------------------------------------------------------------
+    this.camera.applyTo(painter.ctx, ratio, 1);
+    const view = this.camera.worldView;
+
+    this.worldRenderer.update(deltaSeconds, time);
+    this.worldRenderer.drawStaticLayers(painter, view);
+    this.worldRenderer.drawGrass(painter, view);
+    painter.setBlendMode('add');
+    this.worldRenderer.drawGlow(painter, time);
+    painter.setBlendMode('normal');
+
+    // --- объекты ----------------------------------------------------------
+    this.objectRenderer.draw(painter, time);
+
+    // --- паутина ----------------------------------------------------------
+    this.webRenderer.render(painter, time, view);
     this.webRenderer.pruneCache();
 
+    // --- герой ------------------------------------------------------------
     this.spiderVisual.setMood(this.currentMood());
     this.spiderVisual.lookAt(this.lookDirection());
-    this.spiderVisual.update(deltaSeconds, time);
+    this.spiderVisual.update(deltaSeconds);
+    this.spiderVisual.draw(painter, time);
 
+    // --- частицы и прицел --------------------------------------------------
     this.particles.update(deltaSeconds);
+    this.particles.draw(painter);
     this.aimOverlay.render(
+      painter,
       this.webController.preview,
       this.webController.isAiming,
       time,
       this.spiderVisual.getSpinneretWorld(),
     );
-    this.debugOverlay.render(this, {
+
+    this.debugOverlay.drawWorld(painter, {
       spider: this.spider,
       state: this.stateMachine.current,
       web: this.web,
       level: this.level,
+      physics: this.physics,
       timeScale: this.smoothedTimeScale,
       particles: this.particles.count,
     });
+
+    // --- экранный слой -----------------------------------------------------
+    this.surface.resetTransform();
+    this.hud.update(deltaSeconds);
+    this.hud.draw(painter);
+    this.debugOverlay.drawScreen(painter);
   }
 
   /**
@@ -742,11 +766,11 @@ export class PrototypeScene extends Phaser.Scene {
 
     return [
       `build ${__BUILD_ID__}`,
-      `fps ${round(this.game.loop.actualFps)}  dt ${this.game.loop.delta.toFixed(1)}ms  acc ${this.accumulatorMs.toFixed(1)}  run ${this.running}`,
+      `fps ${round(this.getFps())}  acc ${this.accumulatorMs.toFixed(1)}  run ${this.running}`,
       `input src ${input.source}  move ${input.moveX.toFixed(2)},${input.moveY.toFixed(2)}  jump ${input.jumpHeld ? 1 : 0}  web ${input.webHeld ? 1 : 0}`,
       `stick ${this.inputSystem.touch.stick.active ? 'on' : 'off'} ${this.inputSystem.touch.stick.valueX.toFixed(2)},${this.inputSystem.touch.stick.valueY.toFixed(2)}`,
       `pos ${round(body.position.x)},${round(body.position.y)}  vel ${round(velocity.x)},${round(velocity.y)}`,
-      `body.v ${body.velocity.x.toFixed(2)},${body.velocity.y.toFixed(2)}  sleep ${body.isSleeping}  static ${body.isStatic}`,
+      `bodies ${this.physics.bodies.length}  contacts ${this.physics.contactCount}`,
       `state ${this.stateMachine.current}  att ${this.spider.attached}  ctrl ${this.spider.canControl}`,
       `surf ${contact?.surfaceId ?? '—'}  n ${contact ? `${contact.normal.x.toFixed(2)},${contact.normal.y.toFixed(2)}` : '—'}`,
       `respawn ${this.respawnPhase}  prot ${round(this.inputProtectionMs)}  ts ${this.smoothedTimeScale.toFixed(2)}`,
@@ -815,6 +839,39 @@ export class PrototypeScene extends Phaser.Scene {
     return this.stats;
   }
 
+  // Доступ для браузерных тестов: они проверяют физику и головоломку через
+  // те же объекты, с которыми работает игра, а не через отдельный макет.
+
+  get spiderPositionForTest(): Vector2 {
+    return this.spider.position;
+  }
+
+  get diagnosticsForTest(): string {
+    return this.buildDiagnostics();
+  }
+
+  get levelForTest(): LoadedLevel {
+    return this.level;
+  }
+
+  get webForTest(): WebSystem {
+    return this.web;
+  }
+
+  cameraSnapForTest(position: Vector2): void {
+    this.cameraController.snapTo(position);
+  }
+
+  /** Ставит героя в воздух и цепляет нить к якорю — проверка раскачивания. */
+  testTether(anchorId: string, from: Vector2, velocity: Vector2): boolean {
+    const anchor = this.level.anchors.find((a) => a.id === anchorId);
+    if (!anchor) return false;
+    this.spider.teleport(from, { x: 0, y: -1 });
+    this.spider.detachFromSurface(0);
+    this.spider.setVelocity(velocity);
+    return this.webController.testAttachToAnchor(anchor);
+  }
+
   /** Отладочная команда: создать несколько тестовых нитей. */
   spawnTestStrands(count: number): void {
     const origin = this.spider.position;
@@ -837,3 +894,13 @@ export class PrototypeScene extends Phaser.Scene {
     this.web.clearPlayerWeb();
   }
 }
+
+const emptyStats = (): RunStats => ({
+  timeMs: 0,
+  falls: 0,
+  strandsCreated: 0,
+  strandsBroken: 0,
+  peakStrands: 0,
+  jumps: 0,
+  swingTimeMs: 0,
+});

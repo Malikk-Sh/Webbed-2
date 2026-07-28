@@ -1,7 +1,7 @@
-import Phaser from 'phaser';
 import { cameraConfig, VIEW } from '../../app/GameConfig';
 import { clamp, damp } from '../../core/math/Interpolation';
 import { length, type Vector2 } from '../../core/math/Vector2';
+import type { Camera2D } from '../../engine/Camera2D';
 import type { LevelRect } from '../level/LevelSchema';
 
 /**
@@ -22,19 +22,30 @@ export class CameraController {
   private baseScale = 1;
 
   constructor(
-    private readonly camera: Phaser.Cameras.Scene2D.Camera,
-    private readonly bounds: LevelRect,
-  ) {}
+    private readonly camera: Camera2D,
+    bounds: LevelRect,
+  ) {
+    // Границы задаются один раз: камера сама следит, чтобы видимая область не
+    // выходила за пределы комнаты, а если комната меньше экрана — центрирует
+    // её. Прежней ручной подгонки границ под масштаб больше не требуется.
+    this.camera.setBounds({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+    });
+  }
 
   setShakeEnabled(enabled: boolean): void {
     this.shakeEnabled = enabled;
     if (!enabled) this.shakeStrength = 0;
   }
 
-  /** Пересчитывает базовый масштаб так, чтобы по высоте было ~720 единиц. */
+  /** Пересчитывает базовый масштаб так, чтобы по высоте было ~600 единиц. */
   resize(width: number, height: number): void {
     this.baseScale = height / VIEW.referenceHeight;
-    this.applyBounds(width, height);
+    this.camera.setViewport(width, height);
+    this.camera.setZoom(this.baseScale * this.zoom);
   }
 
   snapTo(position: Vector2): void {
@@ -82,7 +93,8 @@ export class CameraController {
     const speedFactor = clamp(speed / 780, 0, 1);
     const targetZoom = tethered
       ? cameraConfig.minimumZoom + (1 - speedFactor) * 0.1
-      : cameraConfig.maximumZoom - speedFactor * (cameraConfig.maximumZoom - cameraConfig.minimumZoom);
+      : cameraConfig.maximumZoom -
+        speedFactor * (cameraConfig.maximumZoom - cameraConfig.minimumZoom);
     this.zoom = damp(this.zoom, targetZoom, cameraConfig.zoomSmoothTimeMs / 1000, deltaSeconds);
 
     let offsetX = 0;
@@ -97,27 +109,14 @@ export class CameraController {
       if (progress >= 1) this.shakeStrength = 0;
     }
 
+    // Масштаб выставляется до центра: ограничение центра границами комнаты
+    // зависит от того, сколько мира сейчас помещается на экране.
     this.camera.setZoom(this.baseScale * this.zoom);
     this.camera.centerOn(this.current.x + offsetX, this.current.y + offsetY);
   }
 
-  private applyBounds(width: number, height: number): void {
-    // Границы расширяются на половину экрана: иначе на широком мониторе
-    // маленькая комната прижимает камеру к краю и герой уезжает из центра.
-    const visibleWidth = width / (this.baseScale * cameraConfig.minimumZoom);
-    const visibleHeight = height / (this.baseScale * cameraConfig.minimumZoom);
-    const padX = Math.max(0, (visibleWidth - this.bounds.width) / 2);
-    const padY = Math.max(0, (visibleHeight - this.bounds.height) / 2);
-    this.camera.setBounds(
-      this.bounds.x - padX,
-      this.bounds.y - padY,
-      this.bounds.width + padX * 2,
-      this.bounds.height + padY * 2,
-    );
-  }
-
   get currentZoom(): number {
-    return this.baseScale * this.zoom;
+    return this.camera.zoom;
   }
 
   get scrollTarget(): Vector2 {

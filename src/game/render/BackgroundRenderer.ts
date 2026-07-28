@@ -1,6 +1,10 @@
-import Phaser from 'phaser';
 import { PALETTE, mixColor } from '../../app/Palette';
 import { createRandom } from '../../core/math/Interpolation';
+import { cssColor } from '../../engine/Color';
+import type { Rect } from '../../core/math/Geometry';
+import type { Camera2D } from '../../engine/Camera2D';
+import type { Painter } from '../../engine/Painter';
+import { ShapeBuffer } from '../../engine/ShapeBuffer';
 import type { LevelDefinition } from '../level/LevelSchema';
 import { TEXTURES } from './TextureFactory';
 
@@ -24,26 +28,36 @@ interface Mote {
   phase: number;
 }
 
+/** Множители прокрутки слоёв: чем ближе план, тем быстрее он едет. */
+const SCROLL = {
+  far: 0.12,
+  rain: 0.18,
+  rays: 0.28,
+  mid: 0.42,
+  near: 0.66,
+  motes: 0.8,
+} as const;
+
 /**
  * Многослойный фон оранжереи.
  *
- * Глубина набирается не одним рисунком, а слоями с разным `scrollFactor`:
- * стеклянная крыша почти неподвижна, дальние силуэты растений двигаются
- * медленно, ближние — быстрее. Между ними — объёмные лучи света и парящая
- * пыльца, которая связывает планы и оживляет пустое пространство.
+ * Глубина набирается не одним рисунком, а слоями с разным множителем
+ * прокрутки: стеклянная крыша почти неподвижна, дальние силуэты растений
+ * двигаются медленно, ближние — быстрее. Между ними — объёмные лучи света и
+ * парящая пыльца, которая связывает планы и оживляет пустое пространство.
+ *
+ * Каждый план рисуется своей матрицей камеры, поэтому масштаб у всех планов
+ * общий и при отдалении картинка не расслаивается.
  */
 export class BackgroundRenderer {
-  private readonly sky: Phaser.GameObjects.Graphics;
-  private readonly farLayer: Phaser.GameObjects.Graphics;
-  private readonly midLayer: Phaser.GameObjects.Graphics;
-  private readonly nearLayer: Phaser.GameObjects.Graphics;
-  private readonly rayLayer: Phaser.GameObjects.Graphics;
-  private readonly moteLayer: Phaser.GameObjects.Graphics;
-  private readonly rainLayer: Phaser.GameObjects.Graphics;
+  private readonly farLayer = new ShapeBuffer();
+  private readonly midLayer = new ShapeBuffer();
+  private readonly nearLayer = new ShapeBuffer();
 
   private readonly rays: RayDefinition[] = [];
   private readonly motes: Mote[] = [];
   private readonly rainDrops: { x: number; y: number; speed: number; length: number }[] = [];
+  private readonly layerView: Rect = { x: 0, y: 0, width: 0, height: 0 };
 
   private layerBudget = 4;
   private showRays = true;
@@ -52,29 +66,9 @@ export class BackgroundRenderer {
   private worldWidth = 4200;
   private worldHeight = 1400;
 
-  constructor(scene: Phaser.Scene, level: LevelDefinition, baseDepth: number) {
+  constructor(level: LevelDefinition) {
     this.worldWidth = level.worldBounds.width;
     this.worldHeight = level.worldBounds.height;
-
-    this.sky = scene.add.graphics().setDepth(baseDepth).setScrollFactor(0);
-    this.farLayer = scene.add.graphics().setDepth(baseDepth + 1).setScrollFactor(0.12);
-    this.rayLayer = scene.add
-      .graphics()
-      .setDepth(baseDepth + 2)
-      .setScrollFactor(0.28)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    this.midLayer = scene.add.graphics().setDepth(baseDepth + 3).setScrollFactor(0.42);
-    this.nearLayer = scene.add.graphics().setDepth(baseDepth + 4).setScrollFactor(0.66);
-    this.moteLayer = scene.add
-      .graphics()
-      .setDepth(baseDepth + 5)
-      .setScrollFactor(0.8)
-      .setBlendMode(Phaser.BlendModes.ADD);
-    this.rainLayer = scene.add
-      .graphics()
-      .setDepth(baseDepth + 2)
-      .setScrollFactor(0.18)
-      .setBlendMode(Phaser.BlendModes.ADD);
 
     this.buildRays();
     this.buildMotes();
@@ -87,21 +81,7 @@ export class BackgroundRenderer {
     this.showRays = rays;
     this.showRain = rain;
     this.moteCount = motes;
-    this.rayLayer.setVisible(rays);
-    this.rainLayer.setVisible(rain);
-    this.midLayer.setVisible(layers >= 3);
-    this.nearLayer.setVisible(layers >= 4);
     this.drawStaticLayers();
-  }
-
-  destroy(): void {
-    this.sky.destroy();
-    this.farLayer.destroy();
-    this.midLayer.destroy();
-    this.nearLayer.destroy();
-    this.rayLayer.destroy();
-    this.moteLayer.destroy();
-    this.rainLayer.destroy();
   }
 
   private buildRays(): void {
@@ -151,31 +131,49 @@ export class BackgroundRenderer {
   }
 
   private drawStaticLayers(): void {
-    this.drawSky();
     this.drawFarLayer();
     this.drawMidLayer();
     this.drawNearLayer();
+    this.farLayer.seal();
+    this.midLayer.seal();
+    this.nearLayer.seal();
   }
 
-  /** Небо рисуется в экранных координатах и не двигается вовсе. */
-  private drawSky(): void {
-    const g = this.sky;
-    g.clear();
-    const width = 4096;
-    const height = 2304;
-    const bands = 26;
-    for (let i = 0; i < bands; i++) {
-      const t = i / (bands - 1);
-      const color =
-        t < 0.5
-          ? mixColor(PALETTE.skyTop, PALETTE.skyMid, t * 2)
-          : mixColor(PALETTE.skyMid, PALETTE.skyLow, (t - 0.5) * 2);
-      g.fillStyle(color, 1);
-      g.fillRect(-width / 2, -height / 2 + (height / bands) * i, width, height / bands + 2);
-    }
-    // Тёплое зарево у горизонта — источник всего света в комнате.
-    g.fillStyle(PALETTE.skyHorizon, 0.13);
-    g.fillEllipse(0, -height * 0.12, width * 0.9, height * 0.5);
+  /**
+   * Небо рисуется прямо в экранных координатах.
+   *
+   * Раньше это был обычный слой с нулевым множителем прокрутки, и какая часть
+   * градиента попадала в кадр, зависело от масштаба камеры и плотности
+   * пикселей — на разных устройствах небо получалось разной светлоты.
+   * Экранный градиент снимает вопрос: верх кадра всегда верх неба.
+   */
+  private drawSky(painter: Painter, width: number, height: number): void {
+    const ctx = painter.ctx;
+
+    const vertical = ctx.createLinearGradient(0, 0, 0, height);
+    vertical.addColorStop(0, cssColor(PALETTE.skyTop, 1));
+    vertical.addColorStop(0.34, cssColor(PALETTE.skyMid, 1));
+    vertical.addColorStop(1, cssColor(PALETTE.skyLow, 1));
+    painter.fillGradient(vertical);
+    painter.fillRect(0, 0, width, height);
+
+    // Зеленоватое зарево у горизонта — источник всего света в комнате.
+    // Именно радиальный градиент, а не залитый эллипс: у эллипса виден край,
+    // и на тёмном фоне он читается как посторонняя дуга поперёк кадра.
+    const radius = Math.max(width, height) * 0.95;
+    const glow = ctx.createRadialGradient(
+      width / 2,
+      height * 0.8,
+      0,
+      width / 2,
+      height * 0.8,
+      radius,
+    );
+    glow.addColorStop(0, cssColor(PALETTE.skyHorizon, 0.3));
+    glow.addColorStop(0.45, cssColor(PALETTE.skyHorizon, 0.14));
+    glow.addColorStop(1, cssColor(PALETTE.skyHorizon, 0));
+    painter.fillGradient(glow);
+    painter.fillRect(0, 0, width, height);
   }
 
   private drawFarLayer(): void {
@@ -268,52 +266,9 @@ export class BackgroundRenderer {
     }
   }
 
-  update(deltaSeconds: number, time: number, camera: Phaser.Cameras.Scene2D.Camera): void {
-    if (this.showRays) this.drawRays(time);
-    this.drawMotes(deltaSeconds, time, camera);
-    if (this.showRain) this.drawRain(deltaSeconds, camera);
-  }
-
-  private drawRays(time: number): void {
-    const g = this.rayLayer;
-    g.clear();
-    for (const ray of this.rays) {
-      // Медленное «дыхание» лучей: слабое колебание ширины и яркости.
-      const breathe = 0.82 + 0.18 * Math.sin(time / 3400 + ray.phase);
-      const alpha = ray.intensity * breathe;
-      const halfWidth = (ray.width / 2) * breathe;
-      const spread = halfWidth * 2.3;
-      const tan = Math.tan(ray.angle);
-      const topX = ray.x - tan * ray.y;
-      const bottomX = ray.x + tan * ray.height;
-
-      g.fillStyle(PALETTE.sunWarm, alpha);
-      g.beginPath();
-      g.moveTo(topX - halfWidth, ray.y);
-      g.lineTo(topX + halfWidth, ray.y);
-      g.lineTo(bottomX + spread, ray.y + ray.height);
-      g.lineTo(bottomX - spread, ray.y + ray.height);
-      g.closePath();
-      g.fillPath();
-
-      // Яркая сердцевина.
-      g.fillStyle(PALETTE.sunCore, alpha * 0.5);
-      g.beginPath();
-      g.moveTo(topX - halfWidth * 0.28, ray.y);
-      g.lineTo(topX + halfWidth * 0.28, ray.y);
-      g.lineTo(bottomX + spread * 0.3, ray.y + ray.height * 0.85);
-      g.lineTo(bottomX - spread * 0.3, ray.y + ray.height * 0.85);
-      g.closePath();
-      g.fillPath();
-    }
-  }
-
-  private drawMotes(deltaSeconds: number, time: number, camera: Phaser.Cameras.Scene2D.Camera): void {
-    const g = this.moteLayer;
-    g.clear();
+  /** Симуляция пыльцы и дождя; отрисовка идёт отдельно, в свой момент кадра. */
+  update(deltaSeconds: number, time: number): void {
     const count = Math.min(this.moteCount, this.motes.length);
-    const view = camera.worldView;
-
     for (let i = 0; i < count; i++) {
       const mote = this.motes[i]!;
       mote.x += (mote.vx + Math.sin(time / 1800 + mote.phase) * 9) * deltaSeconds;
@@ -324,44 +279,139 @@ export class BackgroundRenderer {
       }
       if (mote.x < -60) mote.x = this.worldWidth + 60;
       if (mote.x > this.worldWidth + 60) mote.x = -60;
-
-      // Отбраковка за пределами видимой области с запасом на параллакс.
-      if (
-        mote.x < view.x - 400 ||
-        mote.x > view.right + 400 ||
-        mote.y < view.y - 400 ||
-        mote.y > view.bottom + 400
-      ) {
-        continue;
-      }
-
-      const twinkle = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(time / 700 + mote.phase * 3));
-      g.fillStyle(PALETTE.sunWarm, 0.18 * mote.z * twinkle);
-      g.fillCircle(mote.x, mote.y, mote.size * 2.6);
-      g.fillStyle(PALETTE.sunCore, 0.5 * mote.z * twinkle);
-      g.fillCircle(mote.x, mote.y, mote.size * 0.75);
     }
-  }
 
-  private drawRain(deltaSeconds: number, camera: Phaser.Cameras.Scene2D.Camera): void {
-    const g = this.rainLayer;
-    g.clear();
-    const view = camera.worldView;
-
-    // Дождь идёт снаружи, за стеклом: он мягкий и почти прозрачный.
-    g.lineStyle(1.4, PALETTE.silkGlow, 0.1);
-    g.beginPath();
+    if (!this.showRain) return;
     for (const drop of this.rainDrops) {
       drop.y += drop.speed * deltaSeconds;
       if (drop.y > this.worldHeight * 0.72) {
         drop.y = -40;
         drop.x = Math.random() * this.worldWidth;
       }
-      if (drop.x < view.x - 300 || drop.x > view.right + 300) continue;
-      g.moveTo(drop.x, drop.y);
-      g.lineTo(drop.x + 5, drop.y + drop.length);
     }
-    g.strokePath();
+  }
+
+  /**
+   * Полная отрисовка фона. Порядок планов и их режимы наложения повторяют
+   * прежнюю раскладку по глубине: небо, дальний план, лучи и дождь на
+   * сложении, средний и ближний планы, пыльца сверху.
+   */
+  draw(
+    painter: Painter,
+    camera: Camera2D,
+    pixelRatio: number,
+    time: number,
+    viewportWidth: number,
+    viewportHeight: number,
+  ): void {
+    const ctx = painter.ctx;
+
+    this.drawSky(painter, viewportWidth, viewportHeight);
+
+    camera.applyTo(ctx, pixelRatio, SCROLL.far);
+    this.farLayer.replay(painter, camera.viewFor(SCROLL.far, this.layerView));
+
+    painter.setBlendMode('add');
+    if (this.showRays) {
+      camera.applyTo(ctx, pixelRatio, SCROLL.rays);
+      this.drawRays(painter, time, camera.viewFor(SCROLL.rays, this.layerView));
+    }
+    if (this.showRain) {
+      camera.applyTo(ctx, pixelRatio, SCROLL.rain);
+      this.drawRain(painter, camera.viewFor(SCROLL.rain, this.layerView));
+    }
+    painter.setBlendMode('normal');
+
+    if (this.layerBudget >= 3) {
+      camera.applyTo(ctx, pixelRatio, SCROLL.mid);
+      this.midLayer.replay(painter, camera.viewFor(SCROLL.mid, this.layerView));
+    }
+    if (this.layerBudget >= 4) {
+      camera.applyTo(ctx, pixelRatio, SCROLL.near);
+      this.nearLayer.replay(painter, camera.viewFor(SCROLL.near, this.layerView));
+    }
+
+    painter.setBlendMode('add');
+    camera.applyTo(ctx, pixelRatio, SCROLL.motes);
+    this.drawMotes(painter, time, camera.viewFor(SCROLL.motes, this.layerView));
+    painter.setBlendMode('normal');
+
+    camera.applyTo(ctx, pixelRatio, 1);
+  }
+
+  private drawRays(painter: Painter, time: number, view: Rect): void {
+    const left = view.x - 400;
+    const right = view.x + view.width + 400;
+
+    for (const ray of this.rays) {
+      if (ray.x < left || ray.x > right) continue;
+      // Медленное «дыхание» лучей: слабое колебание ширины и яркости.
+      const breathe = 0.82 + 0.18 * Math.sin(time / 3400 + ray.phase);
+      const alpha = ray.intensity * breathe;
+      const halfWidth = (ray.width / 2) * breathe;
+      const spread = halfWidth * 2.3;
+      const tan = Math.tan(ray.angle);
+      const topX = ray.x - tan * ray.y;
+      const bottomX = ray.x + tan * ray.height;
+
+      painter.fillStyle(PALETTE.sunWarm, alpha);
+      painter.beginPath();
+      painter.moveTo(topX - halfWidth, ray.y);
+      painter.lineTo(topX + halfWidth, ray.y);
+      painter.lineTo(bottomX + spread, ray.y + ray.height);
+      painter.lineTo(bottomX - spread, ray.y + ray.height);
+      painter.closePath();
+      painter.fillPath();
+
+      // Яркая сердцевина.
+      painter.fillStyle(PALETTE.sunCore, alpha * 0.5);
+      painter.beginPath();
+      painter.moveTo(topX - halfWidth * 0.28, ray.y);
+      painter.lineTo(topX + halfWidth * 0.28, ray.y);
+      painter.lineTo(bottomX + spread * 0.3, ray.y + ray.height * 0.85);
+      painter.lineTo(bottomX - spread * 0.3, ray.y + ray.height * 0.85);
+      painter.closePath();
+      painter.fillPath();
+    }
+  }
+
+  private drawMotes(painter: Painter, time: number, view: Rect): void {
+    const count = Math.min(this.moteCount, this.motes.length);
+    const right = view.x + view.width;
+    const bottom = view.y + view.height;
+
+    for (let i = 0; i < count; i++) {
+      const mote = this.motes[i]!;
+      if (
+        mote.x < view.x - 40 ||
+        mote.x > right + 40 ||
+        mote.y < view.y - 40 ||
+        mote.y > bottom + 40
+      ) {
+        continue;
+      }
+
+      const twinkle = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(time / 700 + mote.phase * 3));
+      painter.fillStyle(PALETTE.sunWarm, 0.18 * mote.z * twinkle);
+      painter.fillCircle(mote.x, mote.y, mote.size * 2.6);
+      painter.fillStyle(PALETTE.sunCore, 0.5 * mote.z * twinkle);
+      painter.fillCircle(mote.x, mote.y, mote.size * 0.75);
+    }
+  }
+
+  private drawRain(painter: Painter, view: Rect): void {
+    const left = view.x - 300;
+    const right = view.x + view.width + 300;
+
+    // Дождь идёт снаружи, за стеклом: он мягкий и почти прозрачный.
+    painter.lineStyle(1.4, PALETTE.silkGlow, 0.1);
+    painter.beginPath();
+    for (const drop of this.rainDrops) {
+      if (drop.x < left || drop.x > right) continue;
+      painter.moveTo(drop.x, drop.y);
+      painter.lineTo(drop.x + 5, drop.y + drop.length);
+    }
+    painter.strokePath();
   }
 
   /** Ссылка на текстуру свечения нужна сцене для эффектов ламп. */

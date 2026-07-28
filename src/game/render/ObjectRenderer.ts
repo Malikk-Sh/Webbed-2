@@ -1,6 +1,7 @@
-import Phaser from 'phaser';
 import { PALETTE, mixColor, shade } from '../../app/Palette';
 import { clamp01, easeOutCubic } from '../../core/math/Interpolation';
+import type { Painter } from '../../engine/Painter';
+import { textures } from '../../engine/TextureStore';
 import type { LoadedLevel } from '../level/PrototypeLevelLoader';
 import { TEXTURES } from './TextureFactory';
 
@@ -10,30 +11,7 @@ import { TEXTURES } from './TextureFactory';
  * поворачиваются — но объектов единицы, и это дешевле, чем кажется.
  */
 export class ObjectRenderer {
-  private readonly graphics: Phaser.GameObjects.Graphics;
-  private readonly glow: Phaser.GameObjects.Graphics;
-  private readonly exitHalo: Phaser.GameObjects.Image;
-
-  constructor(
-    scene: Phaser.Scene,
-    private readonly level: LoadedLevel,
-    depth: number,
-  ) {
-    this.graphics = scene.add.graphics().setDepth(depth);
-    this.glow = scene.add
-      .graphics()
-      .setDepth(depth + 1)
-      .setBlendMode(Phaser.BlendModes.ADD);
-
-    const exit = this.exitTrigger();
-    this.exitHalo = scene.add
-      .image(exit.x, exit.y, TEXTURES.glowSoft)
-      .setDepth(depth - 1)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(PALETTE.exitGlow)
-      .setAlpha(0.3)
-      .setScale(1.4);
-  }
+  constructor(private readonly level: LoadedLevel) {}
 
   private exitTrigger(): { x: number; y: number } {
     const trigger = this.level.definition.triggers.find(
@@ -43,26 +21,36 @@ export class ObjectRenderer {
     return { x: trigger.x + trigger.width / 2, y: trigger.y + trigger.height * 0.72 };
   }
 
-  destroy(): void {
-    this.graphics.destroy();
-    this.glow.destroy();
-    this.exitHalo.destroy();
+  /**
+   * Порядок повторяет прежнюю раскладку по глубине: ореол выхода лежит под
+   * объектами, затем идут сами объекты, затем их свечение.
+   */
+  draw(painter: Painter, time: number): void {
+    const exit = this.exitTrigger();
+    const pulse = 0.5 + 0.5 * Math.sin(time / 900);
+    const halo = textures.tint(TEXTURES.glowSoft, PALETTE.exitGlow);
+    const haloSize = halo.width * (1.3 + pulse * 0.18);
+
+    painter.setBlendMode('add');
+    painter.drawTexture(halo.canvas, exit.x, exit.y, haloSize, haloSize, 0, 0.22 + pulse * 0.14);
+    painter.setBlendMode('normal');
+
+    this.drawCrates(painter);
+    this.drawWeights(painter);
+    this.drawPlates(painter, time);
+    this.drawDoors(painter);
+    this.drawSprout(painter, exit, time, pulse);
+
+    painter.setBlendMode('add');
+    this.drawWeightGlow(painter);
+    this.drawPlateGlow(painter, time);
+    this.drawDoorGlow(painter);
+    painter.fillStyle(PALETTE.exitGlow, 0.3);
+    painter.fillCircle(exit.x + Math.sin(time / 1400) * 6, exit.y - 46, 22 + pulse * 8);
+    painter.setBlendMode('normal');
   }
 
-  update(time: number): void {
-    const g = this.graphics;
-    const glow = this.glow;
-    g.clear();
-    glow.clear();
-
-    this.drawCrates(g);
-    this.drawWeights(g, glow);
-    this.drawPlates(g, glow, time);
-    this.drawDoors(g, glow);
-    this.drawExit(glow, time);
-  }
-
-  private drawCrates(g: Phaser.GameObjects.Graphics): void {
+  private drawCrates(g: Painter): void {
     for (const crate of this.level.crates) {
       const { position, angle } = crate.body;
       const hw = crate.width / 2;
@@ -129,10 +117,7 @@ export class ObjectRenderer {
     }
   }
 
-  private drawWeights(
-    g: Phaser.GameObjects.Graphics,
-    glow: Phaser.GameObjects.Graphics,
-  ): void {
+  private drawWeights(g: Painter): void {
     for (const weight of this.level.weights) {
       const { position, angle } = weight.body;
       const r = weight.radius;
@@ -154,16 +139,17 @@ export class ObjectRenderer {
       g.arc(position.x, position.y, r * 0.7, angle + 0.6, angle + 2.2);
       g.strokePath();
 
-      glow.fillStyle(PALETTE.metalEdge, 0.05);
-      glow.fillCircle(position.x, position.y, r * 1.5);
     }
   }
 
-  private drawPlates(
-    g: Phaser.GameObjects.Graphics,
-    glow: Phaser.GameObjects.Graphics,
-    time: number,
-  ): void {
+  private drawWeightGlow(painter: Painter): void {
+    for (const weight of this.level.weights) {
+      painter.fillStyle(PALETTE.metalEdge, 0.05);
+      painter.fillCircle(weight.body.position.x, weight.body.position.y, weight.radius * 1.5);
+    }
+  }
+
+  private drawPlates(g: Painter, time: number): void {
     for (const plate of this.level.plates) {
       const halfWidth = plate.width / 2;
       const sink = plate.depression * 9;
@@ -208,16 +194,25 @@ export class ObjectRenderer {
         }
       }
 
-      const pulse = plate.active ? 0.45 + 0.22 * Math.sin(time / 260) : 0.16 + plate.depression * 0.3;
-      glow.fillStyle(color, pulse * 0.55);
-      glow.fillEllipse(plate.x, top + 4, plate.width * 1.7, 52);
     }
   }
 
-  private drawDoors(
-    g: Phaser.GameObjects.Graphics,
-    glow: Phaser.GameObjects.Graphics,
-  ): void {
+  private drawPlateGlow(painter: Painter, time: number): void {
+    for (const plate of this.level.plates) {
+      const sink = plate.depression * 9;
+      const top = plate.surfaceY - 18 + sink;
+      const color = plate.active
+        ? PALETTE.plateOn
+        : mixColor(PALETTE.plateOff, PALETTE.plateOn, plate.depression * 0.5);
+      const pulse = plate.active
+        ? 0.45 + 0.22 * Math.sin(time / 260)
+        : 0.16 + plate.depression * 0.3;
+      painter.fillStyle(color, pulse * 0.55);
+      painter.fillEllipse(plate.x, top + 4, plate.width * 1.7, 52);
+    }
+  }
+
+  private drawDoors(g: Painter): void {
     for (const door of this.level.doors) {
       const offset = door.visualOffset;
 
@@ -245,24 +240,26 @@ export class ObjectRenderer {
         g.strokePath();
       }
 
-      // Световая щель под приоткрытой дверью.
-      if (door.openness > 0.02) {
-        const gap = easeOutCubic(door.openness) * door.height;
-        glow.fillStyle(PALETTE.exitGlow, 0.28 * door.openness);
-        glow.fillRect(door.x, door.y + door.height - gap, door.width, gap);
-      }
     }
   }
 
-  private drawExit(glow: Phaser.GameObjects.Graphics, time: number): void {
-    const exit = this.exitTrigger();
-    const pulse = 0.5 + 0.5 * Math.sin(time / 900);
+  /** Световая щель под приоткрытой дверью. */
+  private drawDoorGlow(painter: Painter): void {
+    for (const door of this.level.doors) {
+      if (door.openness <= 0.02) continue;
+      const gap = easeOutCubic(door.openness) * door.height;
+      painter.fillStyle(PALETTE.exitGlow, 0.28 * door.openness);
+      painter.fillRect(door.x, door.y + door.height - gap, door.width, gap);
+    }
+  }
 
-    this.exitHalo.setAlpha(0.22 + pulse * 0.14);
-    this.exitHalo.setScale(1.3 + pulse * 0.18);
-
-    // Росток-выход: маленький светящийся побег, ради которого всё затевалось.
-    const g = this.graphics;
+  /** Росток-выход: маленький светящийся побег, ради которого всё затевалось. */
+  private drawSprout(
+    g: Painter,
+    exit: { x: number; y: number },
+    time: number,
+    pulse: number,
+  ): void {
     g.lineStyle(3.4, PALETTE.moss, 0.95);
     g.beginPath();
     g.moveTo(exit.x, exit.y);
@@ -276,7 +273,5 @@ export class ObjectRenderer {
 
     g.fillStyle(PALETTE.exitGlow, 0.95);
     g.fillCircle(exit.x + Math.sin(time / 1400) * 6, exit.y - 46, 7 + pulse * 1.6);
-    glow.fillStyle(PALETTE.exitGlow, 0.3);
-    glow.fillCircle(exit.x + Math.sin(time / 1400) * 6, exit.y - 46, 22 + pulse * 8);
   }
 }

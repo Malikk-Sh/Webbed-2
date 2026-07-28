@@ -12,7 +12,7 @@ export interface WebNode {
   pinned: boolean;
   sleeping: boolean;
 
-  /** Для body-anchor: идентификатор тела Matter и локальное смещение. */
+  /** Для body-anchor: идентификатор твёрдого тела и локальное смещение. */
   bodyId?: number;
   localOffset?: Vector2;
 

@@ -1,8 +1,10 @@
-import Phaser from 'phaser';
-import { inputConfig, webConfig } from '../../app/GameConfig';
+import { inputConfig } from '../../app/GameConfig';
 import { PALETTE, mixColor } from '../../app/Palette';
 import { clamp01, damp, easeOutBack, easeOutCubic } from '../../core/math/Interpolation';
 import { events } from '../../core/events/EventBus';
+import { cssColor } from '../../engine/Color';
+import type { Painter } from '../../engine/Painter';
+import { textures } from '../../engine/TextureStore';
 import type { InputSystem } from '../input/InputSystem';
 import type { TouchButtonLayout } from '../input/TouchInputAdapter';
 import { settingsRepository } from '../save/SettingsRepository';
@@ -16,34 +18,32 @@ interface HintState {
   timer: number;
 }
 
+const SANS = 'Inter, system-ui, sans-serif';
+const SERIF = 'Georgia, serif';
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, monospace';
+
 /**
  * Экранный интерфейс: стик, кнопки, индикатор сети, подсказки, затемнение.
  *
- * HUD живёт отдельной сценой поверх игровой, чтобы не зависеть от масштаба и
- * положения камеры мира. Постоянных элементов ровно столько, сколько требует
- * ТЗ, — стик, прыжок, паутина и мягкий индикатор нагрузки сети.
+ * Интерфейс рисуется в экранных координатах поверх мира и не зависит ни от
+ * камеры, ни от плотности пикселей: холст уже приведён к CSS-пикселям, поэтому
+ * размеры кнопок из настроек означают ровно то, что написано, на любом
+ * телефоне. Постоянных элементов ровно столько, сколько требует ТЗ, — стик,
+ * прыжок, паутина и мягкий индикатор нагрузки сети.
  */
-export class PrototypeHud extends Phaser.Scene {
-  private inputSystem!: InputSystem;
+export class PrototypeHud {
+  private inputSystem: InputSystem | null = null;
   private getWebLoad: () => number = () => 0;
   private getCutAvailable: () => boolean = () => false;
   private getAiming: () => boolean = () => false;
   private getTethered: () => boolean = () => false;
   private getAnchorable: () => boolean = () => false;
-
-  private graphics!: Phaser.GameObjects.Graphics;
-  private glow!: Phaser.GameObjects.Graphics;
-  private vignette!: Phaser.GameObjects.Image;
-  private grain!: Phaser.GameObjects.TileSprite;
-  private fade!: Phaser.GameObjects.Rectangle;
-  private hintText!: Phaser.GameObjects.Text;
-  private titleText!: Phaser.GameObjects.Text;
-  private fpsText!: Phaser.GameObjects.Text;
-  private diagnosticsText!: Phaser.GameObjects.Text;
+  private getFps: () => number = () => 0;
   /** Поставщик живых значений для панели диагностики. */
   private diagnostics: (() => string) | null = null;
 
-  private renderScale = 1;
+  private width = 1;
+  private height = 1;
   private uiScale = 1;
   private uiOpacity = 0.9;
   private leftHanded = false;
@@ -53,6 +53,9 @@ export class PrototypeHud extends Phaser.Scene {
   private hintPhase = 0;
 
   private hint: HintState | null = null;
+  private hintLines: string[] = [];
+  private hintSource = '';
+  private title = '';
   private titleTimer = 0;
   private cutPulse = 0;
   private webPulse = 0;
@@ -60,141 +63,82 @@ export class PrototypeHud extends Phaser.Scene {
   private loadValue = 0;
   private limitFlash = 0;
   private tensionAlert = 0;
+  private fadeAlpha = 0;
+  private grainOffsetX = 0;
+  private grainOffsetY = 0;
+  private grainPattern: CanvasPattern | null = null;
 
   private layout: TouchButtonLayout[] = [];
-
-  constructor() {
-    super({ key: 'PrototypeHud', active: false });
-  }
+  private readonly disposers: (() => void)[] = [];
 
   configure(options: {
     input: InputSystem;
-    renderScale: number;
     getWebLoad: () => number;
     getCutAvailable: () => boolean;
     getAiming: () => boolean;
     getTethered: () => boolean;
     getAnchorable: () => boolean;
+    getFps: () => number;
   }): void {
     this.inputSystem = options.input;
-    this.renderScale = options.renderScale;
     this.getWebLoad = options.getWebLoad;
     this.getCutAvailable = options.getCutAvailable;
     this.getAiming = options.getAiming;
     this.getTethered = options.getTethered;
     this.getAnchorable = options.getAnchorable;
-  }
+    this.getFps = options.getFps;
 
-  create(): void {
-    this.glow = this.add.graphics().setDepth(10).setBlendMode(Phaser.BlendModes.ADD);
-    this.graphics = this.add.graphics().setDepth(11);
+    this.disposers.push(
+      events.on('hint:show', ({ id, text }) => this.showHint(id, text)),
+      events.on('hint:hide', ({ id }) => {
+        if (this.hint?.id === id) this.hint.target = 0;
+      }),
+      events.on('web:limit-reached', () => {
+        this.limitFlash = 1;
+      }),
+      events.on('web:tension-critical', () => {
+        this.tensionAlert = 1;
+      }),
+    );
 
-    this.vignette = this.add
-      .image(0, 0, TEXTURES.vignette)
-      .setOrigin(0, 0)
-      .setDepth(5)
-      .setAlpha(0.85);
-
-    this.grain = this.add
-      .tileSprite(0, 0, 100, 100, TEXTURES.grain)
-      .setOrigin(0, 0)
-      .setDepth(6)
-      .setAlpha(0.5);
-
-    this.hintText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'Inter, system-ui, sans-serif',
-        fontSize: '20px',
-        color: '#e6f3f8',
-        align: 'center',
-      })
-      .setOrigin(0.5, 0.5)
-      .setDepth(14)
-      .setAlpha(0);
-
-    this.titleText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'Georgia, serif',
-        fontSize: '30px',
-        color: '#f2f8fb',
-        align: 'center',
-      })
-      .setOrigin(0.5, 0.5)
-      .setDepth(14)
-      .setAlpha(0);
-
-    this.fpsText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'ui-monospace, monospace',
-        fontSize: '13px',
-        color: '#7fe6ff',
-      })
-      .setOrigin(0, 0)
-      .setDepth(15)
-      .setAlpha(0);
-
-    this.diagnosticsText = this.add
-      .text(0, 0, '', {
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-        fontSize: '12px',
-        color: '#9ff5ff',
-        backgroundColor: 'rgba(4,8,12,0.78)',
-        padding: { x: 8, y: 6 },
-        lineSpacing: 2,
-      })
-      .setOrigin(0, 0)
-      .setDepth(16)
-      .setVisible(false);
-
-    this.fade = this.add
-      .rectangle(0, 0, 10, 10, 0x04070a)
-      .setOrigin(0, 0)
-      .setDepth(20)
-      .setAlpha(0);
-
-    this.scale.on(Phaser.Scale.Events.RESIZE, this.layoutScreen, this);
     settingsRepository.onChange((settings) => {
       this.uiScale = settings.uiScale;
       this.uiOpacity = settings.uiOpacity;
       this.leftHanded = settings.leftHanded;
-      this.fpsText.setAlpha(settings.showFps ? 0.8 : 0);
-      this.layoutScreen();
+      this.resize(this.width, this.height);
     });
 
-    events.on('hint:show', ({ id, text }) => this.showHint(id, text));
-    events.on('hint:hide', ({ id }) => {
-      if (this.hint?.id === id) this.hint.target = 0;
-    });
-    events.on('web:limit-reached', () => {
-      this.limitFlash = 1;
-    });
-    events.on('web:tension-critical', () => {
-      this.tensionAlert = 1;
-    });
-
-    this.layoutScreen();
+    const settings = settingsRepository.current;
+    this.uiScale = settings.uiScale;
+    this.uiOpacity = settings.uiOpacity;
+    this.leftHanded = settings.leftHanded;
   }
 
-  /** Сцена передаёт сюда сборщик диагностики; HUD только рисует результат. */
+  destroy(): void {
+    for (const dispose of this.disposers) dispose();
+    this.disposers.length = 0;
+  }
+
+  /** Сцена передаёт сюда сборщик диагностики; интерфейс только рисует результат. */
   setDiagnosticsSource(source: () => string): void {
     this.diagnostics = source;
   }
 
-  setRenderScale(scale: number): void {
-    this.renderScale = scale;
-    if (this.vignette) this.layoutScreen();
+  resize(width: number, height: number): void {
+    this.width = Math.max(1, width);
+    this.height = Math.max(1, height);
+    this.hintLines = [];
+    this.buildLayout();
   }
 
   showTitle(text: string): void {
-    if (!this.titleText) return;
-    this.titleText.setText(text);
+    this.title = text;
     this.titleTimer = 3.4;
   }
 
   showHint(id: string, text: string): void {
-    if (!this.hintText) return;
     this.hint = { id, text, alpha: 0, target: 1, timer: 5.5 };
-    this.hintText.setText(text);
+    this.hintLines = [];
   }
 
   hideHint(): void {
@@ -202,40 +146,17 @@ export class PrototypeHud extends Phaser.Scene {
   }
 
   setFade(alpha: number): void {
-    this.fade?.setAlpha(alpha);
+    this.fadeAlpha = alpha;
   }
 
   private get dp(): number {
-    return this.renderScale * this.uiScale;
+    return this.uiScale;
   }
 
-  private layoutScreen(): void {
-    const width = this.scale.width;
-    const height = this.scale.height;
-    if (!this.vignette) return;
-
-    this.vignette.setDisplaySize(width, height);
-    this.grain.setSize(width, height);
-    this.fade.setSize(width, height);
-
-    this.hintText.setPosition(width / 2, height * 0.14);
-    this.hintText.setFontSize(Math.round(19 * this.dp));
-    this.hintText.setWordWrapWidth(width * 0.7);
-
-    this.titleText.setPosition(width / 2, height * 0.3);
-    this.titleText.setFontSize(Math.round(30 * this.dp));
-
-    this.fpsText.setPosition(12 * this.renderScale, 10 * this.renderScale);
-    this.fpsText.setFontSize(Math.round(13 * this.renderScale));
-
-    this.diagnosticsText.setPosition(12 * this.renderScale, 34 * this.renderScale);
-    this.diagnosticsText.setFontSize(Math.round(12 * this.renderScale));
-
-    this.buildLayout(width, height);
-  }
-
-  private buildLayout(width: number, height: number): void {
+  private buildLayout(): void {
     const dp = this.dp;
+    const width = this.width;
+    const height = this.height;
     const margin = 34 * dp;
     const bottom = height - margin;
     const side = this.leftHanded ? -1 : 1;
@@ -247,18 +168,9 @@ export class PrototypeHud extends Phaser.Scene {
     const spacing = inputConfig.minButtonSpacing * dp;
 
     // Прыжок ближе к большому пальцу, паутина — выше и левее (для правши).
-    const jump = {
-      x: anchorX - side * jumpRadius,
-      y: bottom - jumpRadius,
-    };
-    const web = {
-      x: jump.x - side * spacing * 0.86,
-      y: jump.y - spacing * 0.52,
-    };
-    const cut = {
-      x: web.x - side * spacing * 0.1,
-      y: web.y - spacing * 0.78,
-    };
+    const jump = { x: anchorX - side * jumpRadius, y: bottom - jumpRadius };
+    const web = { x: jump.x - side * spacing * 0.86, y: jump.y - spacing * 0.52 };
+    const cut = { x: web.x - side * spacing * 0.1, y: web.y - spacing * 0.78 };
 
     this.layout = [
       { id: 'jump', x: jump.x, y: jump.y, radius: jumpRadius, enabled: true },
@@ -273,71 +185,95 @@ export class PrototypeHud extends Phaser.Scene {
       },
     ];
 
-    if (this.inputSystem) {
-      this.inputSystem.touch.setLayout(this.layout);
-      this.inputSystem.touch.setFixedStickOrigin(
+    const input = this.inputSystem;
+    if (input) {
+      input.touch.setLayout(this.layout);
+      input.touch.setFixedStickOrigin(
         this.leftHanded ? width - 150 * dp : 150 * dp,
         height - 150 * dp,
       );
-      this.inputSystem.touch.invalidateRect();
+      input.touch.invalidateRect();
     }
   }
 
-  override update(_time: number, delta: number): void {
-    const deltaSeconds = delta / 1000;
-    const g = this.graphics;
-    const glow = this.glow;
-    g.clear();
-    glow.clear();
+  // ------------------------------------------------------------- симуляция
 
-    if (!this.inputSystem) return;
+  update(deltaSeconds: number): void {
+    const input = this.inputSystem;
+    if (!input) return;
 
     const preference = settingsRepository.current.onScreenControls;
     this.touchVisible =
-      preference === 'on'
-        ? true
-        : preference === 'off'
-          ? false
-          : this.inputSystem.touch.controlsVisible;
+      preference === 'on' ? true : preference === 'off' ? false : input.touch.controlsVisible;
+
     const cutAvailable = this.getCutAvailable();
     const cutButton = this.layout.find((b) => b.id === 'cut');
     if (cutButton) cutButton.enabled = cutAvailable && this.touchVisible;
 
     this.cutPulse = damp(this.cutPulse, cutAvailable ? 1 : 0, 0.12, deltaSeconds);
-    this.webPulse = damp(
-      this.webPulse,
-      this.inputSystem.touch.buttons.web.down ? 1 : 0,
-      0.06,
-      deltaSeconds,
-    );
-    this.jumpPulse = damp(
-      this.jumpPulse,
-      this.inputSystem.touch.buttons.jump.down ? 1 : 0,
-      0.06,
-      deltaSeconds,
-    );
+    this.webPulse = damp(this.webPulse, input.touch.buttons.web.down ? 1 : 0, 0.06, deltaSeconds);
+    this.jumpPulse = damp(this.jumpPulse, input.touch.buttons.jump.down ? 1 : 0, 0.06, deltaSeconds);
     this.loadValue = damp(this.loadValue, this.getWebLoad(), 0.2, deltaSeconds);
     this.limitFlash = Math.max(0, this.limitFlash - deltaSeconds * 1.6);
     this.tensionAlert = Math.max(0, this.tensionAlert - deltaSeconds * 1.2);
-
-    if (this.touchVisible) {
-      this.drawStick(g, glow);
-      this.drawButtons(g, glow);
-    }
-    this.drawPauseButton(g);
-    this.drawWebMeter(g, glow);
-    this.drawTensionAlert(g);
-
     this.hintPhase += deltaSeconds;
-    this.updateTexts(deltaSeconds);
-    this.grain.tilePositionX += delta * 0.02;
-    this.grain.tilePositionY -= delta * 0.013;
+
+    this.grainOffsetX += deltaSeconds * 20;
+    this.grainOffsetY -= deltaSeconds * 13;
+
+    if (this.hint) {
+      this.hint.timer -= deltaSeconds;
+      if (this.hint.timer <= 0) this.hint.target = 0;
+      this.hint.alpha = damp(this.hint.alpha, this.hint.target, 0.18, deltaSeconds);
+      if (this.hint.alpha < 0.01 && this.hint.target === 0) this.hint = null;
+    }
+    if (this.titleTimer > 0) this.titleTimer -= deltaSeconds;
   }
 
-  // ------------------------------------------------------------------ стик
+  // ------------------------------------------------------------- отрисовка
 
-  private drawStick(g: Phaser.GameObjects.Graphics, glow: Phaser.GameObjects.Graphics): void {
-    const stick = this.inputSystem.touch.stick;
+  draw(painter: Painter): void {
+    this.drawPostEffects(painter);
+    if (!this.inputSystem) return;
+
+    if (this.touchVisible) {
+      this.drawStick(painter);
+      this.drawButtons(painter);
+    }
+    this.drawPauseButton(painter);
+    this.drawWebMeter(painter);
+    this.drawTensionAlert(painter);
+    this.drawTexts(painter);
+
+    if (this.fadeAlpha > 0.001) {
+      painter.fillStyle(0x04070a, Math.min(1, this.fadeAlpha));
+      painter.fillRect(0, 0, this.width, this.height);
+    }
+  }
+
+  /** Виньетка и зерно: две дешёвые текстуры вместо полноэкранного шейдера. */
+  private drawPostEffects(painter: Painter): void {
+    const vignette = textures.get(TEXTURES.vignette);
+    painter.setAlpha(0.85);
+    painter.drawTextureRect(vignette.canvas, 0, 0, this.width, this.height);
+    painter.setAlpha(1);
+
+    if (!this.grainPattern) {
+      this.grainPattern = painter.ctx.createPattern(textures.get(TEXTURES.grain).canvas, 'repeat');
+    }
+    if (!this.grainPattern) return;
+
+    const ctx = painter.ctx;
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.translate(this.grainOffsetX % 256, this.grainOffsetY % 256);
+    ctx.fillStyle = this.grainPattern;
+    ctx.fillRect(-256, -256, this.width + 512, this.height + 512);
+    ctx.restore();
+  }
+
+  private drawStick(painter: Painter): void {
+    const stick = this.inputSystem!.touch.stick;
     const settings = settingsRepository.current;
     const dp = this.dp;
     const radius = (inputConfig.stickRadius / 2) * dp * 1.1;
@@ -355,57 +291,59 @@ export class PrototypeHud extends Phaser.Scene {
     const originX = stick.active
       ? stick.originX
       : this.leftHanded
-        ? this.scale.width - 150 * dp
+        ? this.width - 150 * dp
         : 150 * dp;
-    const originY = stick.active ? stick.originY : this.scale.height - 150 * dp;
+    const originY = stick.active ? stick.originY : this.height - 150 * dp;
 
     const breathe = showGhost ? 0.55 + 0.45 * Math.sin(this.hintPhase * 2.4) : 1;
     const alpha = (stick.active ? 0.9 : 0.42 * breathe) * this.uiOpacity;
-
-    // Внешнее кольцо.
-    g.lineStyle(2 * dp, PALETTE.uiSilk, 0.22 * alpha);
-    g.strokeCircle(originX, originY, radius);
-    g.lineStyle(1.2 * dp, PALETTE.uiAccent, 0.16 * alpha);
-    g.strokeCircle(originX, originY, maxOffset);
 
     // Направляющий сектор — подсказывает, куда отклонён стик.
     const magnitude = Math.hypot(stick.valueX, stick.valueY);
     if (magnitude > 0.03) {
       const angle = Math.atan2(stick.valueY, stick.valueX);
-      glow.fillStyle(PALETTE.uiAccent, 0.1 * alpha * magnitude);
-      glow.slice(originX, originY, maxOffset, angle - 0.5, angle + 0.5, false);
-      glow.fillPath();
+      painter.setBlendMode('add');
+      painter.fillStyle(PALETTE.uiAccent, 0.1 * alpha * magnitude);
+      painter.slice(originX, originY, maxOffset, angle - 0.5, angle + 0.5, false);
+      painter.fillPath();
+      painter.setBlendMode('normal');
     }
+
+    // Внешнее кольцо.
+    painter.lineStyle(2 * dp, PALETTE.uiSilk, 0.22 * alpha);
+    painter.strokeCircle(originX, originY, radius);
+    painter.lineStyle(1.2 * dp, PALETTE.uiAccent, 0.16 * alpha);
+    painter.strokeCircle(originX, originY, maxOffset);
 
     if (showGhost) {
       // Две стрелки по горизонтали: главное движение в игре — влево-вправо.
       const reach = maxOffset * 0.72;
       const tip = radius * 0.3;
-      g.lineStyle(2.2 * dp, PALETTE.uiSilk, 0.5 * alpha);
+      painter.lineStyle(2.2 * dp, PALETTE.uiSilk, 0.5 * alpha);
       for (const side of [-1, 1]) {
         const x = originX + side * reach;
-        g.beginPath();
-        g.moveTo(x - side * tip, originY - tip);
-        g.lineTo(x, originY);
-        g.lineTo(x - side * tip, originY + tip);
-        g.strokePath();
+        painter.beginPath();
+        painter.moveTo(x - side * tip, originY - tip);
+        painter.lineTo(x, originY);
+        painter.lineTo(x - side * tip, originY + tip);
+        painter.strokePath();
       }
     }
 
     const knobX = originX + stick.valueX * maxOffset;
     const knobY = originY + stick.valueY * maxOffset;
 
-    glow.fillStyle(PALETTE.uiAccent, 0.16 * alpha);
-    glow.fillCircle(knobX, knobY, radius * 0.78);
-    g.fillStyle(PALETTE.uiSilk, 0.26 * alpha);
-    g.fillCircle(knobX, knobY, radius * 0.52);
-    g.lineStyle(1.6 * dp, PALETTE.uiSilk, 0.6 * alpha);
-    g.strokeCircle(knobX, knobY, radius * 0.52);
+    painter.setBlendMode('add');
+    painter.fillStyle(PALETTE.uiAccent, 0.16 * alpha);
+    painter.fillCircle(knobX, knobY, radius * 0.78);
+    painter.setBlendMode('normal');
+    painter.fillStyle(PALETTE.uiSilk, 0.26 * alpha);
+    painter.fillCircle(knobX, knobY, radius * 0.52);
+    painter.lineStyle(1.6 * dp, PALETTE.uiSilk, 0.6 * alpha);
+    painter.strokeCircle(knobX, knobY, radius * 0.52);
   }
 
-  // ----------------------------------------------------------------- кнопки
-
-  private drawButtons(g: Phaser.GameObjects.Graphics, glow: Phaser.GameObjects.Graphics): void {
+  private drawButtons(painter: Painter): void {
     const dp = this.dp;
 
     for (const button of this.layout) {
@@ -414,8 +352,7 @@ export class PrototypeHud extends Phaser.Scene {
 
       const pressed =
         button.id === 'jump' ? this.jumpPulse : button.id === 'web' ? this.webPulse : 0;
-      const scale = 1 - pressed * 0.08;
-      const radius = button.radius * scale;
+      const radius = button.radius * (1 - pressed * 0.08);
 
       let color: number = PALETTE.uiSilk;
       let label = '';
@@ -435,50 +372,54 @@ export class PrototypeHud extends Phaser.Scene {
 
       if (alpha < 0.02) continue;
 
-      glow.fillStyle(color, (0.08 + pressed * 0.18) * alpha);
-      glow.fillCircle(button.x, button.y, radius * 1.5);
+      painter.setBlendMode('add');
+      painter.fillStyle(color, (0.08 + pressed * 0.18) * alpha);
+      painter.fillCircle(button.x, button.y, radius * 1.5);
+      painter.setBlendMode('normal');
 
-      g.fillStyle(PALETTE.uiInk, 0.42 * alpha);
-      g.fillCircle(button.x, button.y, radius);
-      g.lineStyle(2 * dp, color, (0.55 + pressed * 0.45) * alpha);
-      g.strokeCircle(button.x, button.y, radius);
+      painter.fillStyle(PALETTE.uiInk, 0.42 * alpha);
+      painter.fillCircle(button.x, button.y, radius);
+      painter.lineStyle(2 * dp, color, (0.55 + pressed * 0.45) * alpha);
+      painter.strokeCircle(button.x, button.y, radius);
 
-      this.drawGlyph(g, label, button.x, button.y, radius, color, alpha);
+      this.drawGlyph(painter, label, button.x, button.y, radius, color, alpha);
 
       // Кольцо прогресса удержания паутины — переход в режим прицеливания.
-      if (button.id === 'web' && this.inputSystem.touch.buttons.web.down) {
-        const progress = clamp01(this.inputSystem.touch.buttons.web.holdMs / 140);
-        g.lineStyle(3 * dp, PALETTE.uiWarn, 0.9 * alpha);
-        g.beginPath();
-        g.arc(
+      if (button.id === 'web' && this.inputSystem!.touch.buttons.web.down) {
+        const progress = clamp01(this.inputSystem!.touch.buttons.web.holdMs / 140);
+        painter.lineStyle(3 * dp, PALETTE.uiWarn, 0.9 * alpha);
+        painter.beginPath();
+        painter.arc(
           button.x,
           button.y,
           radius + 5 * dp,
           -Math.PI / 2,
           -Math.PI / 2 + progress * Math.PI * 2,
         );
-        g.strokePath();
+        painter.strokePath();
       }
     }
 
     // Подпись действия у кнопки паутины меняется по состоянию.
     const web = this.layout.find((b) => b.id === 'web');
-    if (web) {
-      const caption = this.getAnchorable()
-        ? 'закрепить'
-        : this.getTethered()
-          ? 'сменить нить'
-          : this.getAiming()
-            ? 'выбор точки'
-            : '';
-      if (caption) {
-        this.drawCaption(g, caption, web.x, web.y + web.radius + 15 * dp);
-      }
-    }
+    if (!web) return;
+    const caption = this.getAnchorable()
+      ? 'закрепить'
+      : this.getTethered()
+        ? 'сменить нить'
+        : this.getAiming()
+          ? 'выбор точки'
+          : '';
+    if (!caption) return;
+
+    painter.setFont(`${Math.round(11 * dp)}px ${SANS}`);
+    painter.setTextAlign('center', 'middle');
+    painter.fillStyle(0x9fb8c4, 0.8 * this.uiOpacity);
+    painter.fillText(caption, web.x, web.y + web.radius + 15 * dp);
   }
 
   private drawGlyph(
-    g: Phaser.GameObjects.Graphics,
+    painter: Painter,
     kind: string,
     x: number,
     y: number,
@@ -487,113 +428,78 @@ export class PrototypeHud extends Phaser.Scene {
     alpha: number,
   ): void {
     const s = radius * 0.42;
-    g.lineStyle(Math.max(1.6, radius * 0.09), color, 0.95 * alpha);
+    painter.lineStyle(Math.max(1.6, radius * 0.09), color, 0.95 * alpha);
 
     if (kind === 'jump') {
       // Стрелка вверх с подставкой.
-      g.beginPath();
-      g.moveTo(x, y - s);
-      g.lineTo(x, y + s * 0.5);
-      g.moveTo(x - s * 0.62, y - s * 0.25);
-      g.lineTo(x, y - s);
-      g.lineTo(x + s * 0.62, y - s * 0.25);
-      g.strokePath();
-      g.lineStyle(Math.max(1.4, radius * 0.07), color, 0.6 * alpha);
-      g.beginPath();
-      g.moveTo(x - s * 0.7, y + s * 0.85);
-      g.lineTo(x + s * 0.7, y + s * 0.85);
-      g.strokePath();
+      painter.beginPath();
+      painter.moveTo(x, y - s);
+      painter.lineTo(x, y + s * 0.5);
+      painter.moveTo(x - s * 0.62, y - s * 0.25);
+      painter.lineTo(x, y - s);
+      painter.lineTo(x + s * 0.62, y - s * 0.25);
+      painter.strokePath();
+      painter.lineStyle(Math.max(1.4, radius * 0.07), color, 0.6 * alpha);
+      painter.beginPath();
+      painter.moveTo(x - s * 0.7, y + s * 0.85);
+      painter.lineTo(x + s * 0.7, y + s * 0.85);
+      painter.strokePath();
     } else if (kind === 'web') {
-      // Мини-паутина: три радиуса и два витка.
+      // Мини-паутина: шесть радиусов и два витка.
+      painter.beginPath();
       for (let i = 0; i < 6; i++) {
         const angle = (i / 6) * Math.PI * 2;
-        g.beginPath();
-        g.moveTo(x, y);
-        g.lineTo(x + Math.cos(angle) * s, y + Math.sin(angle) * s);
-        g.strokePath();
+        painter.moveTo(x, y);
+        painter.lineTo(x + Math.cos(angle) * s, y + Math.sin(angle) * s);
       }
+      painter.strokePath();
       for (const ring of [0.45, 0.85]) {
-        g.beginPath();
+        painter.beginPath();
         for (let i = 0; i <= 6; i++) {
           const angle = (i / 6) * Math.PI * 2;
           const px = x + Math.cos(angle) * s * ring;
           const py = y + Math.sin(angle) * s * ring;
-          if (i === 0) g.moveTo(px, py);
-          else g.lineTo(px, py);
+          if (i === 0) painter.moveTo(px, py);
+          else painter.lineTo(px, py);
         }
-        g.strokePath();
+        painter.strokePath();
       }
     } else {
       // Ножницы.
-      g.beginPath();
-      g.moveTo(x - s * 0.7, y - s * 0.7);
-      g.lineTo(x + s * 0.5, y + s * 0.5);
-      g.moveTo(x + s * 0.7, y - s * 0.7);
-      g.lineTo(x - s * 0.5, y + s * 0.5);
-      g.strokePath();
-      g.fillStyle(color, 0.9 * alpha);
-      g.fillCircle(x - s * 0.62, y + s * 0.66, s * 0.24);
-      g.fillCircle(x + s * 0.62, y + s * 0.66, s * 0.24);
+      painter.beginPath();
+      painter.moveTo(x - s * 0.7, y - s * 0.7);
+      painter.lineTo(x + s * 0.5, y + s * 0.5);
+      painter.moveTo(x + s * 0.7, y - s * 0.7);
+      painter.lineTo(x - s * 0.5, y + s * 0.5);
+      painter.strokePath();
+      painter.fillStyle(color, 0.9 * alpha);
+      painter.fillCircle(x - s * 0.62, y + s * 0.66, s * 0.24);
+      painter.fillCircle(x + s * 0.62, y + s * 0.66, s * 0.24);
     }
   }
 
-  private drawCaption(
-    g: Phaser.GameObjects.Graphics,
-    text: string,
-    x: number,
-    y: number,
-  ): void {
-    // Подпись рисуется как «псевдотекст»: короткие штрихи вместо букв были бы
-    // нечитаемы, поэтому используется настоящий текстовый объект из пула.
-    const key = `caption:${text}`;
-    let label = this.children.getByName(key) as Phaser.GameObjects.Text | null;
-    if (!label) {
-      label = this.add
-        .text(0, 0, text, {
-          fontFamily: 'Inter, system-ui, sans-serif',
-          fontSize: `${Math.round(11 * this.dp)}px`,
-          color: '#9fb8c4',
-        })
-        .setName(key)
-        .setOrigin(0.5, 0.5)
-        .setDepth(13);
-    }
-    label.setPosition(x, y);
-    label.setAlpha(0.8 * this.uiOpacity);
-    label.setVisible(true);
-    void g;
-
-    // Прячем остальные подписи.
-    for (const child of this.children.list) {
-      const name = (child as Phaser.GameObjects.GameObject).name;
-      if (name.startsWith('caption:') && name !== key) {
-        (child as Phaser.GameObjects.Text).setVisible(false);
-      }
-    }
-  }
-
-  private drawPauseButton(g: Phaser.GameObjects.Graphics): void {
+  private drawPauseButton(painter: Painter): void {
     const button = this.layout.find((b) => b.id === 'pause');
     if (!button) return;
     const dp = this.dp;
     const alpha = 0.55 * this.uiOpacity;
 
-    g.fillStyle(PALETTE.uiInk, 0.4 * alpha);
-    g.fillCircle(button.x, button.y, button.radius);
-    g.lineStyle(1.6 * dp, PALETTE.uiSilk, 0.5 * alpha);
-    g.strokeCircle(button.x, button.y, button.radius);
+    painter.fillStyle(PALETTE.uiInk, 0.4 * alpha);
+    painter.fillCircle(button.x, button.y, button.radius);
+    painter.lineStyle(1.6 * dp, PALETTE.uiSilk, 0.5 * alpha);
+    painter.strokeCircle(button.x, button.y, button.radius);
 
     const bar = button.radius * 0.36;
-    g.fillStyle(PALETTE.uiSilk, 0.85 * alpha);
-    g.fillRect(button.x - bar * 0.7, button.y - bar, bar * 0.5, bar * 2);
-    g.fillRect(button.x + bar * 0.22, button.y - bar, bar * 0.5, bar * 2);
+    painter.fillStyle(PALETTE.uiSilk, 0.85 * alpha);
+    painter.fillRect(button.x - bar * 0.7, button.y - bar, bar * 0.5, bar * 2);
+    painter.fillRect(button.x + bar * 0.22, button.y - bar, bar * 0.5, bar * 2);
   }
 
   /**
    * Индикатор сложности сети: четыре состояния без точных чисел
    * (раздел 53.2 ТЗ) — свободно, нагрузка, почти предел, предел.
    */
-  private drawWebMeter(g: Phaser.GameObjects.Graphics, glow: Phaser.GameObjects.Graphics): void {
+  private drawWebMeter(painter: Painter): void {
     const web = this.layout.find((b) => b.id === 'web');
     if (!web) return;
     const dp = this.dp;
@@ -616,24 +522,26 @@ export class PrototypeHud extends Phaser.Scene {
       const sweep = Math.PI * 1.25;
       const start = Math.PI * 0.62;
 
-      g.lineStyle(3 * dp, PALETTE.uiSilk, 0.12 * this.uiOpacity);
-      g.beginPath();
-      g.arc(web.x, web.y, radius, start, start + sweep);
-      g.strokePath();
+      painter.lineStyle(3 * dp, PALETTE.uiSilk, 0.12 * this.uiOpacity);
+      painter.beginPath();
+      painter.arc(web.x, web.y, radius, start, start + sweep);
+      painter.strokePath();
 
       if (load > 0.004) {
-        g.lineStyle(3 * dp, color, alpha);
-        g.beginPath();
-        g.arc(web.x, web.y, radius, start, start + sweep * load);
-        g.strokePath();
+        painter.lineStyle(3 * dp, color, alpha);
+        painter.beginPath();
+        painter.arc(web.x, web.y, radius, start, start + sweep * load);
+        painter.strokePath();
       }
 
       if (this.limitFlash > 0) {
         const flash = easeOutCubic(this.limitFlash);
-        glow.lineStyle(5 * dp, PALETTE.uiDanger, flash * 0.7);
-        glow.beginPath();
-        glow.arc(web.x, web.y, radius + 4 * dp * (1 - flash), start, start + sweep);
-        glow.strokePath();
+        painter.setBlendMode('add');
+        painter.lineStyle(5 * dp, PALETTE.uiDanger, flash * 0.7);
+        painter.beginPath();
+        painter.arc(web.x, web.y, radius + 4 * dp * (1 - flash), start, start + sweep);
+        painter.strokePath();
+        painter.setBlendMode('normal');
       }
       return;
     }
@@ -642,67 +550,117 @@ export class PrototypeHud extends Phaser.Scene {
     // геймпаде индикатор превращается в компактную полоску в углу.
     const barWidth = 96 * dp;
     const barHeight = 4 * dp;
-    const x = this.scale.width - barWidth - 28 * dp;
+    const x = this.width - barWidth - 28 * dp;
     const y = 30 * dp;
 
-    g.fillStyle(PALETTE.uiSilk, 0.12 * this.uiOpacity);
-    g.fillRoundedRect(x, y, barWidth, barHeight, barHeight / 2);
+    painter.fillStyle(PALETTE.uiSilk, 0.12 * this.uiOpacity);
+    painter.fillRoundedRect(x, y, barWidth, barHeight, barHeight / 2);
     if (load > 0.004) {
-      g.fillStyle(color, Math.max(alpha, 0.5) * this.uiOpacity);
-      g.fillRoundedRect(x, y, Math.max(barHeight, barWidth * load), barHeight, barHeight / 2);
+      painter.fillStyle(color, Math.max(alpha, 0.5) * this.uiOpacity);
+      painter.fillRoundedRect(
+        x,
+        y,
+        Math.max(barHeight, barWidth * load),
+        barHeight,
+        barHeight / 2,
+      );
     }
     if (this.limitFlash > 0) {
       const flash = easeOutCubic(this.limitFlash);
-      glow.fillStyle(PALETTE.uiDanger, flash * 0.5);
-      glow.fillRoundedRect(x - 3 * dp, y - 3 * dp, barWidth + 6 * dp, barHeight + 6 * dp, 4 * dp);
+      painter.setBlendMode('add');
+      painter.fillStyle(PALETTE.uiDanger, flash * 0.5);
+      painter.fillRoundedRect(
+        x - 3 * dp,
+        y - 3 * dp,
+        barWidth + 6 * dp,
+        barHeight + 6 * dp,
+        4 * dp,
+      );
+      painter.setBlendMode('normal');
     }
-    void webConfig;
   }
 
   /** Красная кайма экрана, когда нить вот-вот порвётся. */
-  private drawTensionAlert(g: Phaser.GameObjects.Graphics): void {
+  private drawTensionAlert(painter: Painter): void {
     if (this.tensionAlert <= 0.01) return;
-    const width = this.scale.width;
-    const height = this.scale.height;
     const alpha = this.tensionAlert * 0.28;
-    const thickness = 26 * this.renderScale;
-    g.fillStyle(PALETTE.uiDanger, alpha);
-    g.fillRect(0, 0, width, thickness);
-    g.fillRect(0, height - thickness, width, thickness);
-    g.fillRect(0, 0, thickness, height);
-    g.fillRect(width - thickness, 0, thickness, height);
+    const thickness = 26;
+    painter.fillStyle(PALETTE.uiDanger, alpha);
+    painter.fillRect(0, 0, this.width, thickness);
+    painter.fillRect(0, this.height - thickness, this.width, thickness);
+    painter.fillRect(0, 0, thickness, this.height);
+    painter.fillRect(this.width - thickness, 0, thickness, this.height);
   }
 
-  private updateTexts(deltaSeconds: number): void {
-    if (this.hint) {
-      this.hint.timer -= deltaSeconds;
-      if (this.hint.timer <= 0) this.hint.target = 0;
-      this.hint.alpha = damp(this.hint.alpha, this.hint.target, 0.18, deltaSeconds);
-      this.hintText.setAlpha(this.hint.alpha);
+  private drawTexts(painter: Painter): void {
+    const dp = this.dp;
+
+    if (this.hint && this.hint.alpha > 0.01) {
+      const size = Math.round(19 * dp);
+      painter.setFont(`${size}px ${SANS}`);
+      painter.setTextAlign('center', 'middle');
+      if (this.hintLines.length === 0 || this.hintSource !== this.hint.text) {
+        this.hintSource = this.hint.text;
+        this.hintLines = painter.wrapText(this.hint.text, this.width * 0.7);
+      }
       // Лёгкий подъём при появлении делает подсказку заметной без вспышки.
-      this.hintText.setY(
-        this.scale.height * 0.14 + (1 - easeOutCubic(this.hint.alpha)) * 14 * this.dp,
-      );
-      if (this.hint.alpha < 0.01 && this.hint.target === 0) this.hint = null;
+      const baseY =
+        this.height * 0.14 + (1 - easeOutCubic(this.hint.alpha)) * 14 * dp;
+      painter.fillStyle(0xe6f3f8, clamp01(this.hint.alpha));
+      const lineHeight = size * 1.35;
+      const top = baseY - ((this.hintLines.length - 1) * lineHeight) / 2;
+      for (let i = 0; i < this.hintLines.length; i++) {
+        painter.fillText(this.hintLines[i]!, this.width / 2, top + i * lineHeight);
+      }
     }
 
-    if (this.titleTimer > 0) {
-      this.titleTimer -= deltaSeconds;
+    if (this.titleTimer > 0 && this.title) {
       const t = this.titleTimer;
       const alpha = t > 2.6 ? easeOutBack(clamp01((3.4 - t) / 0.8)) : clamp01(t / 1.1);
-      this.titleText.setAlpha(clamp01(alpha) * 0.95);
-    } else {
-      this.titleText.setAlpha(0);
+      painter.setFont(`${Math.round(30 * dp)}px ${SERIF}`);
+      painter.setTextAlign('center', 'middle');
+      painter.fillStyle(0xf2f8fb, clamp01(alpha) * 0.95);
+      painter.fillText(this.title, this.width / 2, this.height * 0.3);
     }
 
     if (settingsRepository.current.showFps) {
-      this.fpsText.setText(`${Math.round(this.game.loop.actualFps)} FPS`);
+      painter.setFont(`13px ${MONO}`);
+      painter.setTextAlign('left', 'top');
+      painter.fillStyle(0x7fe6ff, 0.8);
+      painter.fillText(`${Math.round(this.getFps())} FPS`, 12, 10);
     }
 
-    const wantDiagnostics = settingsRepository.current.showDiagnostics;
-    this.diagnosticsText.setVisible(wantDiagnostics);
-    if (wantDiagnostics && this.diagnostics) {
-      this.diagnosticsText.setText(this.diagnostics());
+    if (settingsRepository.current.showDiagnostics && this.diagnostics) {
+      this.drawDiagnostics(painter, this.diagnostics());
+    }
+  }
+
+  /** Панель диагностики: моноширинный блок на затемнённой подложке. */
+  private drawDiagnostics(painter: Painter, text: string): void {
+    const lines = text.split('\n');
+    const size = 12;
+    const lineHeight = size + 4;
+    const padding = 8;
+
+    painter.setFont(`${size}px ${MONO}`);
+    painter.setTextAlign('left', 'top');
+
+    let widest = 0;
+    for (const line of lines) widest = Math.max(widest, painter.measureWidth(line));
+
+    const x = 12;
+    const y = 34;
+    painter.fillStyle(0x04080c, 0.78);
+    painter.fillRect(
+      x,
+      y,
+      widest + padding * 2,
+      lines.length * lineHeight + padding * 2,
+    );
+
+    painter.ctx.fillStyle = cssColor(0x9ff5ff, 1);
+    for (let i = 0; i < lines.length; i++) {
+      painter.fillText(lines[i]!, x + padding, y + padding + i * lineHeight);
     }
   }
 }

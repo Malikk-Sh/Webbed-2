@@ -1,28 +1,33 @@
-import Phaser from 'phaser';
 import { events } from '../core/events/EventBus';
 import type { RunStats } from '../core/events/GameEvents';
+import { Camera2D } from '../engine/Camera2D';
+import { GameLoop } from '../engine/GameLoop';
+import { Painter } from '../engine/Painter';
+import { Surface } from '../engine/Surface';
+import { textures } from '../engine/TextureStore';
 import { audio } from '../game/audio/AudioEngine';
 import { InputSystem } from '../game/input/InputSystem';
 import { settingsRepository } from '../game/save/SettingsRepository';
 import { PrototypeScene } from '../game/scenes/PrototypeScene';
 import { PrototypeHud } from '../game/ui/PrototypeHud';
-import { ShellUi, type ShellAction } from './ShellUi';
-import { PALETTE } from './Palette';
 import { createRuntimeTextures } from '../game/render/TextureFactory';
+import { ShellUi, type ShellAction } from './ShellUi';
 
 /**
- * Точка сборки приложения: игра Phaser, ввод, интерфейс и жизненный цикл
- * вкладки. Здесь же живёт правило «после сворачивания не продолжаем игру
+ * Точка сборки приложения: холст, цикл кадра, ввод, интерфейс и жизненный
+ * цикл вкладки. Здесь же живёт правило «после сворачивания не продолжаем игру
  * автоматически, а показываем паузу» из раздела 36 ТЗ.
  */
 export class GameApp {
-  private game: Phaser.Game | null = null;
+  private surface: Surface | null = null;
+  private loop: GameLoop | null = null;
+  private scene: PrototypeScene | null = null;
   private input: InputSystem | null = null;
+  private readonly camera = new Camera2D();
+  private readonly hud = new PrototypeHud();
   private readonly shell = new ShellUi();
-  private renderScale = 1;
   private started = false;
   private paused = false;
-  private resizeRaf = 0;
 
   async boot(): Promise<void> {
     this.shell.setLoadingProgress(0.1, 'Пробуем нить на прочность…');
@@ -34,137 +39,61 @@ export class GameApp {
     const parent = document.getElementById('game-root');
     if (!parent) throw new Error('Не найден контейнер #game-root');
 
-    this.renderScale = this.computeRenderScale();
+    this.surface = new Surface(parent);
+    const painter = new Painter(this.surface.ctx);
+    painter.bind(this.surface.ctx);
 
-    this.game = new Phaser.Game({
-      type: Phaser.AUTO,
-      parent,
-      backgroundColor: PALETTE.skyTop,
-      scale: {
-        mode: Phaser.Scale.NONE,
-        width: Math.max(1, Math.floor(window.innerWidth * this.renderScale)),
-        height: Math.max(1, Math.floor(window.innerHeight * this.renderScale)),
-      },
-      render: {
-        antialias: true,
-        roundPixels: false,
-        powerPreference: 'high-performance',
-      },
-      physics: {
-        default: 'matter',
-        matter: {
-          /**
-           * Засыпание тел выключено намеренно.
-           *
-           * Matter усыпляет тело после 60 кадров покоя и полностью исключает
-           * его из интегратора, при этом ни `Body.setVelocity`, ни
-           * `Body.applyForce` спящее тело не будят. Для героя это фатально:
-           * он стоит на старте дольше секунды, засыпает — и дальше скорость
-           * выставляется, а позиция не меняется. Ровно та же ловушка ждала
-           * улёгшийся ящик, который затем тянет нить.
-           *
-           * Выигрыш от засыпания здесь всё равно нулевой: динамических тел
-           * единицы. Настоящая оптимизация — сон участков паутины — своя и
-           * от этого флага не зависит.
-           */
-          enableSleeping: false,
-          gravity: { x: 0, y: 1.75 },
-          // Отладочная отрисовка Matter не нужна: свой слой информативнее.
-          debug: false,
-        },
-      },
-      fps: {
-        target: 60,
-        min: 30,
-        smoothStep: true,
-      },
-      // Сцены добавляются вручную после готовности игры: им нужны ссылки на
-      // ввод и интерфейс ещё до первого `create()`.
-      scene: [],
-      audio: { noAudio: true },
-      banner: false,
-    });
-
-    await this.waitForGameReady();
-    // Текстуры готовятся до старта сцен: ими пользуется и HUD, и мир.
-    createRuntimeTextures(this.game.textures);
+    // Текстуры готовятся до первой отрисовки: ими пользуются и мир, и
+    // интерфейс, и подставлять заглушку в первом кадре некуда.
+    createRuntimeTextures(textures);
     this.shell.setLoadingProgress(0.7, 'Развешиваем капли росы…');
 
-    const canvas = this.game.canvas;
-    this.applyCanvasStyle(canvas);
-    this.input = new InputSystem(canvas);
-    this.input.setRenderScale(this.renderScale);
+    this.input = new InputSystem(this.surface.canvas);
+    this.camera.setViewport(this.surface.width, this.surface.height);
 
-    const scene = this.game.scene.add(
-      'PrototypeScene',
-      PrototypeScene,
-      false,
-    ) as unknown as PrototypeScene;
-    const hud = this.game.scene.add(
-      'PrototypeHud',
-      PrototypeHud,
-      false,
-    ) as unknown as PrototypeHud;
+    this.loop = new GameLoop((deltaMs, timeMs) => this.scene?.frame(deltaMs, timeMs));
+    this.loop.setFrameCap(settingsRepository.current.frameCap);
 
-    hud.configure({
+    this.hud.configure({
       input: this.input,
-      renderScale: this.renderScale,
-      getWebLoad: () => scene.webLoad,
-      getCutAvailable: () => scene.cutAvailable,
-      getAiming: () => scene.aiming,
-      getTethered: () => scene.tethered,
-      getAnchorable: () => scene.anchorable,
+      getWebLoad: () => this.scene?.webLoad ?? 0,
+      getCutAvailable: () => this.scene?.cutAvailable ?? false,
+      getAiming: () => this.scene?.aiming ?? false,
+      getTethered: () => this.scene?.tethered ?? false,
+      getAnchorable: () => this.scene?.anchorable ?? false,
+      getFps: () => this.loop?.fps ?? 0,
     });
+    this.hud.resize(this.surface.width, this.surface.height);
 
-    scene.configure({
+    this.scene = new PrototypeScene({
+      surface: this.surface,
+      camera: this.camera,
+      painter,
       input: this.input,
-      hud,
+      hud: this.hud,
+      getFps: () => this.loop?.fps ?? 0,
       onComplete: (stats) => this.handleComplete(stats),
       onPauseRequested: () => this.pause(false),
     });
 
-    // HUD запускается первым, чтобы его `create()` успел построить слои до
-    // того, как игровая сцена начнёт обращаться к подсказкам и затемнению;
-    // затем он поднимается наверх, поверх мира.
-    this.game.scene.start('PrototypeHud');
-    this.game.scene.start('PrototypeScene');
-    this.game.scene.bringToTop('PrototypeHud');
+    this.surface.onResize((surface) => this.camera.setViewport(surface.width, surface.height));
 
-    this.bindShell(scene);
-    this.bindLifecycle(scene);
+    this.bindShell();
+    this.bindLifecycle();
 
     settingsRepository.onChange((settings) => {
       audio.setVolumes(settings.masterVolume, settings.musicVolume, settings.sfxVolume);
       this.applyDocumentSettings();
-      if (this.game) this.game.loop.targetFps = settings.frameCap;
+      this.loop?.setFrameCap(settings.frameCap);
+      this.scene?.applyQuality();
     });
+
+    // Цикл крутится всегда: в меню сцена не обновляет симуляцию, но продолжает
+    // рисовать живой мир за полупрозрачным интерфейсом.
+    this.loop.start();
 
     this.shell.setLoadingProgress(1, 'Готово');
     window.setTimeout(() => this.shell.show('menu'), 320);
-  }
-
-  private waitForGameReady(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.game) {
-        resolve();
-        return;
-      }
-      this.game.events.once(Phaser.Core.Events.READY, () => resolve());
-      // Страховка: если событие уже прошло, не подвисаем на загрузке.
-      window.setTimeout(resolve, 3000);
-    });
-  }
-
-  private computeRenderScale(): number {
-    // Рендер в физических пикселях, но не выше 2× — на телефонах с DPR 3
-    // третий множитель почти не виден, а стоит трети кадрового бюджета.
-    return Math.min(window.devicePixelRatio || 1, 2);
-  }
-
-  private applyCanvasStyle(canvas: HTMLCanvasElement): void {
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.display = 'block';
   }
 
   private applyDocumentSettings(): void {
@@ -174,8 +103,11 @@ export class GameApp {
 
   // ------------------------------------------------------------------ шелл
 
-  private bindShell(scene: PrototypeScene): void {
+  private bindShell(): void {
     this.shell.onAction((action: ShellAction) => {
+      const scene = this.scene;
+      if (!scene) return;
+
       switch (action) {
         case 'play':
           void this.startGame(scene);
@@ -184,9 +116,6 @@ export class GameApp {
           this.resume(scene);
           break;
         case 'restart':
-          scene.restartRoom();
-          this.resume(scene);
-          break;
         case 'replay':
           scene.restartRoom();
           this.resume(scene);
@@ -213,6 +142,7 @@ export class GameApp {
   private resume(scene: PrototypeScene): void {
     this.shell.show(null);
     this.paused = false;
+    this.loop?.resetTiming();
     scene.setRunning(true);
     this.input?.setEnabled(true);
     audio.resume();
@@ -222,8 +152,7 @@ export class GameApp {
   private pause(fromSystem: boolean): void {
     if (this.paused || !this.started) return;
     this.paused = true;
-    const scene = this.game?.scene.getScene('PrototypeScene') as unknown as PrototypeScene | undefined;
-    scene?.setRunning(false);
+    this.scene?.setRunning(false);
     this.input?.setEnabled(false);
     settingsRepository.flush();
     if (fromSystem) audio.suspend();
@@ -242,8 +171,7 @@ export class GameApp {
 
   private handleComplete(stats: RunStats): void {
     settingsRepository.recordCompletion(stats.timeMs);
-    const scene = this.game?.scene.getScene('PrototypeScene') as unknown as PrototypeScene | undefined;
-    scene?.setRunning(false);
+    this.scene?.setRunning(false);
     this.paused = true;
     this.started = false;
     this.shell.showResults(stats, settingsRepository.currentProgress.bestTimeMs);
@@ -251,7 +179,7 @@ export class GameApp {
 
   // ------------------------------------------------------- жизненный цикл
 
-  private bindLifecycle(scene: PrototypeScene): void {
+  private bindLifecycle(): void {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.pauseFromSystem();
       else this.resumeFromSystem();
@@ -260,9 +188,6 @@ export class GameApp {
     window.addEventListener('pagehide', () => this.pauseFromSystem());
     window.addEventListener('blur', () => this.pauseFromSystem());
 
-    window.addEventListener('resize', () => this.scheduleResize());
-    window.addEventListener('orientationchange', () => window.setTimeout(() => this.resize(), 180));
-
     // Первое касание разблокирует звук: браузеры не дают включить
     // AudioContext без жеста пользователя.
     const unlock = () => {
@@ -270,8 +195,6 @@ export class GameApp {
     };
     window.addEventListener('pointerdown', unlock, { once: true });
     window.addEventListener('keydown', unlock, { once: true });
-
-    void scene;
   }
 
   pauseFromSystem(): void {
@@ -283,28 +206,8 @@ export class GameApp {
     // Игра сознательно не продолжается сама: игрок мог вернуться в опасный
     // момент, поэтому его встречает меню паузы.
     audio.resume();
-    this.resize();
-  }
-
-  private scheduleResize(): void {
-    if (this.resizeRaf) cancelAnimationFrame(this.resizeRaf);
-    this.resizeRaf = requestAnimationFrame(() => {
-      this.resizeRaf = 0;
-      this.resize();
-    });
-  }
-
-  private resize(): void {
-    if (!this.game) return;
-    this.renderScale = this.computeRenderScale();
-    const width = Math.max(1, Math.floor(window.innerWidth * this.renderScale));
-    const height = Math.max(1, Math.floor(window.innerHeight * this.renderScale));
-    this.game.scale.resize(width, height);
-    this.applyCanvasStyle(this.game.canvas);
-    this.input?.setRenderScale(this.renderScale);
-    this.input?.touch.invalidateRect();
-    const hud = this.game.scene.getScene('PrototypeHud') as unknown as PrototypeHud | undefined;
-    hud?.setRenderScale(this.renderScale);
+    this.loop?.resetTiming();
+    this.surface?.resize();
   }
 
   get shellUi(): ShellUi {

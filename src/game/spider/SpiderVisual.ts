@@ -1,8 +1,9 @@
-import Phaser from 'phaser';
 import { PALETTE, mixColor, shade } from '../../app/Palette';
 import { surfaceAttachmentConfig } from '../../app/GameConfig';
 import { clamp, clamp01, damp, easeOutCubic, wobble } from '../../core/math/Interpolation';
 import type { Vector2 } from '../../core/math/Vector2';
+import type { Painter } from '../../engine/Painter';
+import { textures } from '../../engine/TextureStore';
 import type { CollisionWorld } from '../physics/CollisionWorld';
 import { TEXTURES } from '../render/TextureFactory';
 import type { SpiderController } from './SpiderController';
@@ -45,10 +46,6 @@ const LEGS_PER_SIDE = 4;
  */
 export class SpiderVisual {
   private readonly legs: Leg[] = [];
-  private readonly graphics: Phaser.GameObjects.Graphics;
-  private readonly glow: Phaser.GameObjects.Image;
-  private readonly eyeGlow: Phaser.GameObjects.Image;
-  private readonly shadow: Phaser.GameObjects.Image;
 
   private gaitPhase = 0;
   private breath = 0;
@@ -64,36 +61,9 @@ export class SpiderVisual {
   private facingBlend = 1;
 
   constructor(
-    scene: Phaser.Scene,
     private readonly controller: SpiderController,
     private readonly collision: CollisionWorld,
-    depth: number,
   ) {
-    this.shadow = scene.add
-      .image(0, 0, TEXTURES.glowSoft)
-      .setDepth(depth - 2)
-      .setBlendMode(Phaser.BlendModes.MULTIPLY)
-      .setTint(0x141d26)
-      .setAlpha(0.5);
-
-    this.glow = scene.add
-      .image(0, 0, TEXTURES.glowSoft)
-      .setDepth(depth - 1)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(PALETTE.spiderEyeGlow)
-      .setAlpha(0.12)
-      .setScale(0.5);
-
-    this.graphics = scene.add.graphics().setDepth(depth);
-
-    this.eyeGlow = scene.add
-      .image(0, 0, TEXTURES.glow)
-      .setDepth(depth + 1)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(PALETTE.spiderEye)
-      .setAlpha(0.45)
-      .setScale(0.22);
-
     const surfaceY = surfaceAttachmentConfig.targetDistance + 1;
     for (const side of [-1, 1] as const) {
       for (let i = 0; i < LEGS_PER_SIDE; i++) {
@@ -144,14 +114,7 @@ export class SpiderVisual {
     }
   }
 
-  destroy(): void {
-    this.graphics.destroy();
-    this.glow.destroy();
-    this.eyeGlow.destroy();
-    this.shadow.destroy();
-  }
-
-  update(deltaSeconds: number, time: number): void {
+  update(deltaSeconds: number): void {
     const controller = this.controller;
     const position = controller.position;
     const angle = controller.visualAngle;
@@ -191,7 +154,76 @@ export class SpiderVisual {
     };
 
     this.updateLegs(deltaSeconds, toWorld, speed);
-    this.draw(position, angle, cos, sin, flip, toWorld, time);
+  }
+
+  /**
+   * Отрисовка. Порядок повторяет прежнюю раскладку по глубине: тень под
+   * телом на умножении, мягкий ореол на сложении, само тело, свечение глаз.
+   */
+  draw(painter: Painter, time: number): void {
+    const controller = this.controller;
+    const position = controller.position;
+    const angle = controller.visualAngle;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const flip = this.facingBlend;
+    const toWorld = (local: Vector2): Vector2 => {
+      const lx = local.x * flip;
+      const ly = local.y;
+      return {
+        x: position.x + lx * cos - ly * sin,
+        y: position.y + lx * sin + ly * cos,
+      };
+    };
+
+    const soft = textures.get(TEXTURES.glowSoft);
+
+    // Тень ложится на саму поверхность и вытянута вдоль неё.
+    const contact = controller.contact;
+    if (contact && controller.attached) {
+      const shadow = textures.tint(TEXTURES.glowSoft, 0x141d26);
+      painter.setBlendMode('multiply');
+      painter.drawTexture(
+        shadow.canvas,
+        contact.point.x,
+        contact.point.y,
+        shadow.width * 0.28,
+        shadow.height * 0.12,
+        angle,
+        0.45,
+      );
+    }
+
+    const halo = textures.tint(TEXTURES.glowSoft, PALETTE.spiderEyeGlow);
+    painter.setBlendMode('add');
+    painter.drawTexture(
+      halo.canvas,
+      position.x,
+      position.y,
+      soft.width * 0.5,
+      soft.height * 0.5,
+      0,
+      0.1 + this.spinneretGlow * 0.2,
+    );
+    painter.setBlendMode('normal');
+
+    const eyeCentre = this.drawBody(painter, position, angle, cos, sin, flip, toWorld);
+
+    const eye = textures.tint(TEXTURES.glow, PALETTE.spiderEye);
+    const openness = clamp01(1 - this.blink) * (1 - this.moodEnergy * 0.3);
+    const pulse = 0.4 + Math.sin(time / 620) * 0.05 + this.spinneretGlow * 0.2;
+    const eyeSize = eye.width * (0.24 + this.moodEnergy * 0.05);
+    painter.setBlendMode('add');
+    painter.drawTexture(
+      eye.canvas,
+      eyeCentre.x,
+      eyeCentre.y,
+      eyeSize,
+      eyeSize,
+      0,
+      Math.max(0, pulse * openness),
+    );
+    painter.setBlendMode('normal');
   }
 
   // ------------------------------------------------------------------- ноги
@@ -338,18 +370,16 @@ export class SpiderVisual {
 
   // --------------------------------------------------------------- рисование
 
-  private draw(
+  /** Возвращает мировую точку, вокруг которой светятся глаза. */
+  private drawBody(
+    g: Painter,
     position: Vector2,
     angle: number,
     cos: number,
     sin: number,
     flip: number,
     toWorld: (local: Vector2) => Vector2,
-    time: number,
-  ): void {
-    const g = this.graphics;
-    g.clear();
-
+  ): Vector2 {
     const squash = this.controller.landingSquash;
     // Приземление сплющивает по нормали и растягивает вдоль поверхности.
     const scaleAlong = 1 + squash * 0.24;
@@ -365,21 +395,6 @@ export class SpiderVisual {
         y: position.y + lx * sin + ly * cos,
       };
     };
-
-    // --- тень ----------------------------------------------------------
-    const contact = this.controller.contact;
-    if (contact && this.controller.attached) {
-      this.shadow.setVisible(true);
-      this.shadow.setPosition(contact.point.x, contact.point.y);
-      this.shadow.setScale(0.28, 0.12);
-      this.shadow.setRotation(angle);
-      this.shadow.setAlpha(0.45);
-    } else {
-      this.shadow.setVisible(false);
-    }
-
-    this.glow.setPosition(position.x, position.y);
-    this.glow.setAlpha(0.1 + this.spinneretGlow * 0.2);
 
     // --- дальние ноги ---------------------------------------------------
     for (const leg of this.legs) {
@@ -436,16 +451,18 @@ export class SpiderVisual {
       g.strokePath();
     }
 
-    this.drawEyes(g, body, cos, sin, flip, time);
+    const eyeCentre = this.drawEyes(g, body, cos, sin, flip);
 
     if (this.spinneretGlow > 0.01) {
       g.fillStyle(PALETTE.silkGlow, this.spinneretGlow * 0.9);
       g.fillCircle(spinneret.x, spinneret.y, 2 + this.spinneretGlow * 2.8);
     }
+
+    return eyeCentre;
   }
 
   private drawLeg(
-    g: Phaser.GameObjects.Graphics,
+    g: Painter,
     leg: Leg,
     toWorld: (local: Vector2) => Vector2,
     depthFactor: number,
@@ -498,13 +515,12 @@ export class SpiderVisual {
   }
 
   private drawEyes(
-    g: Phaser.GameObjects.Graphics,
+    g: Painter,
     body: (x: number, y: number) => Vector2,
     cos: number,
     sin: number,
     flip: number,
-    time: number,
-  ): void {
+  ): Vector2 {
     // Взгляд переводится в локальные координаты, чтобы глаза следили за
     // целью, а не за экраном, на любой поверхности.
     const facingSign = flip >= 0 ? 1 : -1;
@@ -551,39 +567,19 @@ export class SpiderVisual {
       }
     }
 
-    const centre = body(9.8, -2.6);
-    this.eyeGlow.setPosition(centre.x, centre.y);
-    const pulse = 0.4 + Math.sin(time / 620) * 0.05 + this.spinneretGlow * 0.2;
-    this.eyeGlow.setAlpha(pulse * openness);
-    this.eyeGlow.setScale(0.24 + fear * 0.05);
+    return body(9.8, -2.6);
   }
 
   private fillEllipse(
-    g: Phaser.GameObjects.Graphics,
+    g: Painter,
     centre: Vector2,
     rx: number,
     ry: number,
     angle: number,
     color: number,
   ): void {
-    // Phaser рисует эллипсы только по осям, поэтому повёрнутый строится
-    // многоугольником — шестнадцати сегментов хватает на любом масштабе.
-    const steps = 16;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
     g.fillStyle(color, 1);
-    g.beginPath();
-    for (let i = 0; i <= steps; i++) {
-      const t = (i / steps) * Math.PI * 2;
-      const lx = Math.cos(t) * rx;
-      const ly = Math.sin(t) * ry;
-      const x = centre.x + lx * cos - ly * sin;
-      const y = centre.y + lx * sin + ly * cos;
-      if (i === 0) g.moveTo(x, y);
-      else g.lineTo(x, y);
-    }
-    g.closePath();
-    g.fillPath();
+    g.fillEllipseRotated(centre.x, centre.y, rx, ry, angle);
   }
 
   /** Точка выхода нити — кончик брюшка. */

@@ -7,14 +7,13 @@ import { events } from '../../core/events/EventBus';
 import { clamp, damp } from '../../core/math/Interpolation';
 import { dot, length, normalize, type Vector2 } from '../../core/math/Vector2';
 import type { CollisionWorld } from '../physics/CollisionWorld';
-import { MatterLib } from '../physics/MatterLib';
-import { getVelocity, velocityToMatter } from '../physics/MatterUnits';
+import type { RigidBody } from '../../engine/physics/RigidBody';
 import type { InputFrame } from '../input/InputFrame';
 import { SpiderStateMachine } from './SpiderStateMachine';
 import { SpiderSurfaceSensor, type SurfaceContact } from './SpiderSurfaceSensor';
 
 export interface SpiderControllerDeps {
-  body: MatterJS.BodyType;
+  body: RigidBody;
   world: CollisionWorld;
   state: SpiderStateMachine;
 }
@@ -23,10 +22,10 @@ export interface SpiderControllerDeps {
  * Движение паучихи: сцепление с поверхностью, бег по любой стороне
  * геометрии, прыжок с помощью игроку и управление в воздухе.
  *
- * Скорость задаётся напрямую, а не через силы Matter. Для персонажа, которым
+ * Скорость задаётся напрямую, а не через силы. Для персонажа, которым
  * управляет игрок, это единственный способ получить одинаковый отклик на
- * камне, металле и потолке — интегратор Matter иначе размазывает ускорение
- * по-разному в зависимости от накопленной скорости.
+ * камне, металле и потолке: при управлении силами интегратор размазывает
+ * ускорение по-разному в зависимости от накопленной скорости.
  */
 export class SpiderController {
   readonly sensor: SpiderSurfaceSensor;
@@ -48,7 +47,7 @@ export class SpiderController {
   /** Мгновенное ускорение — визуализация наклоняет корпус по нему. */
   readonly smoothedAcceleration: Vector2 = { x: 0, y: 0 };
 
-  private readonly body: MatterJS.BodyType;
+  private readonly body: RigidBody;
   private readonly state: SpiderStateMachine;
 
   private coyoteMs = 0;
@@ -89,8 +88,8 @@ export class SpiderController {
   }
 
   teleport(position: Vector2, normal: Vector2): void {
-    MatterLib.Body.setPosition(this.body, { x: position.x, y: position.y });
-    MatterLib.Body.setVelocity(this.body, { x: 0, y: 0 });
+    this.body.setPosition(position.x, position.y);
+    this.body.setVelocity(0, 0);
     this.velocity.x = 0;
     this.velocity.y = 0;
     this.attached = true;
@@ -123,12 +122,12 @@ export class SpiderController {
   setVelocity(velocity: Vector2): void {
     this.velocity.x = velocity.x;
     this.velocity.y = velocity.y;
-    MatterLib.Body.setVelocity(this.body, velocityToMatter(velocity));
+    this.body.setVelocity(velocity.x, velocity.y);
   }
 
   /** Записывает текущую скорость в тело — после ручных правок вектора. */
   syncVelocityToBody(): void {
-    MatterLib.Body.setVelocity(this.body, velocityToMatter(this.velocity));
+    this.body.setVelocity(this.velocity.x, this.velocity.y);
   }
 
   /**
@@ -136,25 +135,21 @@ export class SpiderController {
    * нити: маятник корректирует положение, но не гасит движение по дуге.
    */
   teleportRelative(dx: number, dy: number): void {
-    MatterLib.Body.setPosition(this.body, {
-      x: this.body.position.x + dx,
-      y: this.body.position.y + dy,
-    });
+    this.body.setPosition(this.body.position.x + dx, this.body.position.y + dy);
   }
 
   addVelocity(delta: Vector2): void {
     this.setVelocity({ x: this.velocity.x + delta.x, y: this.velocity.y + delta.y });
   }
 
-  /** Основной шаг. Вызывается с фиксированным шагом до обновления Matter. */
+  /** Основной шаг. Вызывается с фиксированным шагом до шага физики. */
   fixedUpdate(deltaSeconds: number, input: InputFrame, tethered: boolean): void {
     const deltaMs = deltaSeconds * 1000;
     const previousVelocity = { x: this.velocity.x, y: this.velocity.y };
 
-    // Matter мог изменить скорость столкновением с ящиком — читаем актуальную.
-    const current = getVelocity(this.body);
-    this.velocity.x = current.x;
-    this.velocity.y = current.y;
+    // Столкновение с ящиком могло изменить скорость — читаем актуальную.
+    this.velocity.x = this.body.velocity.x;
+    this.velocity.y = this.body.velocity.y;
 
     this.detachCooldownMs = Math.max(0, this.detachCooldownMs - deltaMs);
     this.stunMs = Math.max(0, this.stunMs - deltaMs);
@@ -436,7 +431,7 @@ export class SpiderController {
       this.velocity.y = 0;
       console.warn('[SpiderController] Некорректная скорость сброшена');
     }
-    MatterLib.Body.setVelocity(this.body, velocityToMatter(this.velocity));
+    this.body.setVelocity(this.velocity.x, this.velocity.y);
   }
 
   /** Страховка от проникновения в геометрию на большой скорости. */
@@ -447,10 +442,7 @@ export class SpiderController {
     const push = query.inside
       ? spiderBodyConfig.radius + Math.abs(query.distance)
       : spiderBodyConfig.radius - query.distance;
-    MatterLib.Body.setPosition(this.body, {
-      x: position.x + query.normal.x * push,
-      y: position.y + query.normal.y * push,
-    });
+    this.body.setPosition(position.x + query.normal.x * push, position.y + query.normal.y * push);
   }
 
   /**

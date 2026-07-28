@@ -24,12 +24,11 @@ export const VIEW = {
 export const PHYSICS = {
   fixedDeltaMs: 1000 / 60,
   maxAccumulatedSteps: 4,
-  /**
-   * Matter при gravity.scale = 0.001 и шаге 1/60 даёт ускорение
-   * gravity.y * 1000 единиц/с². Значение подобрано под gravity = 1750.
-   */
-  matterGravityScale: 0.001,
+  /** Ускорение свободного падения, единицы/с². */
   gravity: 1750,
+  /** Итерации решателя контактов: скоростные и позиционные. */
+  velocityIterations: 8,
+  positionIterations: 3,
 } as const;
 
 export interface SpiderMovementConfig {

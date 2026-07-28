@@ -78,15 +78,13 @@ export class InputSystem {
   private readonly onMouseMove = (event: MouseEvent) => {
     const rect = this.canvas.getBoundingClientRect();
     this.mousePointer = {
-      x: (event.clientX - rect.left) * this.renderScale,
-      y: (event.clientY - rect.top) * this.renderScale,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     };
   };
 
   private readonly onContextMenu = (event: Event) => event.preventDefault();
   private readonly onBlur = () => this.releaseAll();
-
-  private renderScale = 1;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.touch = new TouchInputAdapter(canvas);
@@ -120,11 +118,6 @@ export class InputSystem {
     window.removeEventListener('blur', this.onBlur);
     window.removeEventListener('gamepadconnected', this.onGamepadConnected);
     window.removeEventListener('gamepaddisconnected', this.onGamepadDisconnected);
-  }
-
-  setRenderScale(scale: number): void {
-    this.renderScale = scale;
-    this.touch.setRenderScale(scale);
   }
 
   setEnabled(enabled: boolean): void {
@@ -166,7 +159,7 @@ export class InputSystem {
     this.touch.update(deltaMs);
 
     const settings = settingsRepository.current;
-    this.touch.setPreferences(settings.leftHanded, settings.fixedStick);
+    this.touch.setPreferences(settings.leftHanded, settings.fixedStick, settings.uiScale);
 
     const pad = this.readGamepad();
 
