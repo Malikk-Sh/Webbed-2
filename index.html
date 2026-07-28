@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0d1520" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="description"
+      content="Silkbound: Сад после дождя — атмосферный мобильный платформер о паучихе Люме и физически активной паутине."
+    />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/icon.svg" />
+    <title>Silkbound: Сад после дождя</title>
+  </head>
+
+  <body>
+    <!-- Игровое полотно Phaser монтируется сюда -->
+    <div id="game-root" aria-hidden="true"></div>
+
+    <!-- HTML-слой интерфейса поверх игры -->
+    <div id="ui-root">
+      <!-- ЗАГРУЗКА -->
+      <section class="screen screen--loading is-visible" id="screen-loading">
+        <div class="loading">
+          <svg class="loading__web" viewBox="0 0 240 240" aria-hidden="true">
+            <g class="loading__radials"></g>
+            <g class="loading__spiral"></g>
+          </svg>
+          <div class="loading__mark">
+            <span class="loading__title">SILKBOUND</span>
+            <span class="loading__sub">Сад после дождя</span>
+          </div>
+          <div class="loading__bar"><i id="loading-fill"></i></div>
+          <p class="loading__hint" id="loading-hint">Плетём первую нить…</p>
+        </div>
+      </section>
+
+      <!-- ГЛАВНОЕ МЕНЮ -->
+      <section class="screen screen--menu" id="screen-menu">
+        <div class="menu">
+          <header class="menu__head">
+            <p class="menu__eyebrow">играбельный прототип · 0.1</p>
+            <h1 class="menu__title">
+              <span>Silk</span><span class="accent">bound</span>
+            </h1>
+            <p class="menu__subtitle">Сад после дождя</p>
+          </header>
+
+          <nav class="menu__actions">
+            <button class="btn btn--primary" data-action="play">
+              <span class="btn__glyph">▶</span>
+              <span class="btn__label">
+                <b>Играть</b>
+                <i id="menu-play-note">Тестовая комната</i>
+              </span>
+            </button>
+            <button class="btn" data-action="settings">
+              <span class="btn__glyph">⚙</span>
+              <span class="btn__label"><b>Настройки</b></span>
+            </button>
+            <button class="btn" data-action="howto">
+              <span class="btn__glyph">?</span>
+              <span class="btn__label"><b>Управление</b></span>
+            </button>
+            <button class="btn btn--ghost" data-action="install" hidden id="btn-install">
+              <span class="btn__glyph">↧</span>
+              <span class="btn__label"><b>Установить приложение</b></span>
+            </button>
+          </nav>
+
+          <footer class="menu__foot">
+            <span>Играется в горизонтальной ориентации</span>
+            <span class="dot"></span>
+            <span>Работает офлайн</span>
+          </footer>
+        </div>
+      </section>
+
+      <!-- ПАУЗА -->
+      <section class="screen screen--dialog" id="screen-pause">
+        <div class="panel">
+          <h2 class="panel__title">Пауза</h2>
+          <div class="panel__body panel__body--actions">
+            <button class="btn btn--primary" data-action="resume">
+              <span class="btn__glyph">▶</span>
+              <span class="btn__label"><b>Продолжить</b></span>
+            </button>
+            <button class="btn" data-action="restart">
+              <span class="btn__glyph">↺</span>
+              <span class="btn__label"><b>С контрольной точки</b></span>
+            </button>
+            <button class="btn" data-action="settings">
+              <span class="btn__glyph">⚙</span>
+              <span class="btn__label"><b>Настройки</b></span>
+            </button>
+            <button class="btn" data-action="howto">
+              <span class="btn__glyph">?</span>
+              <span class="btn__label"><b>Управление</b></span>
+            </button>
+            <button class="btn btn--ghost" data-action="quit">
+              <span class="btn__glyph">⌂</span>
+              <span class="btn__label"><b>В главное меню</b></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- НАСТРОЙКИ -->
+      <section class="screen screen--dialog" id="screen-settings">
+        <div class="panel panel--wide">
+          <h2 class="panel__title">Настройки</h2>
+          <div class="panel__body panel__body--scroll" id="settings-body"></div>
+          <div class="panel__foot">
+            <button class="btn btn--ghost" data-action="settings-reset">
+              <span class="btn__label"><b>Сбросить</b></span>
+            </button>
+            <button class="btn btn--primary" data-action="close">
+              <span class="btn__label"><b>Готово</b></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- УПРАВЛЕНИЕ -->
+      <section class="screen screen--dialog" id="screen-howto">
+        <div class="panel panel--wide">
+          <h2 class="panel__title">Управление</h2>
+          <div class="panel__body panel__body--scroll">
+            <div class="howto">
+              <div class="howto__col">
+                <h3>Сенсор</h3>
+                <dl>
+                  <dt>Левая половина экрана</dt>
+                  <dd>Плавающий стик: движение, управление в воздухе, раскачивание. Вверх и вниз — подтянуть или удлинить активную нить.</dd>
+                  <dt>Кнопка прыжка</dt>
+                  <dd>Нажатие — прыжок. Удержание — выше. В воздухе на нити — отпустить с импульсом.</dd>
+                  <dt>Кнопка паутины</dt>
+                  <dd>Короткое нажатие — быстрый выстрел. Удержание — прицеливание с замедлением времени, отпускание — выпуск нити.</dd>
+                  <dt>Кнопка ножниц</dt>
+                  <dd>Появляется рядом с доступной нитью. Разрезает ближайший сегмент.</dd>
+                </dl>
+              </div>
+              <div class="howto__col">
+                <h3>Клавиатура</h3>
+                <dl class="keys">
+                  <dt><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd></dt><dd>Движение</dd>
+                  <dt><kbd>W</kbd><kbd>S</kbd> / <kbd>↑</kbd><kbd>↓</kbd></dt><dd>Подтянуть / удлинить нить</dd>
+                  <dt><kbd>Space</kbd></dt><dd>Прыжок</dd>
+                  <dt><kbd>E</kbd> / <kbd>ПКМ</kbd></dt><dd>Паутина (удержание — прицел)</dd>
+                  <dt><kbd>Q</kbd></dt><dd>Разрезать ближайшую нить</dd>
+                  <dt><kbd>R</kbd></dt><dd>С контрольной точки</dd>
+                  <dt><kbd>Esc</kbd></dt><dd>Пауза</dd>
+                  <dt><kbd>F1</kbd></dt><dd>Отладочная панель</dd>
+                </dl>
+                <p class="howto__note">
+                  Геймпад: левый стик — движение, <b>A</b> — прыжок, <b>RT / X</b> — паутина,
+                  <b>B</b> — разрезать.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div class="panel__foot">
+            <button class="btn btn--primary" data-action="close">
+              <span class="btn__label"><b>Понятно</b></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- РЕЗУЛЬТАТЫ -->
+      <section class="screen screen--dialog" id="screen-results">
+        <div class="panel">
+          <p class="panel__eyebrow">Комната пройдена</p>
+          <h2 class="panel__title">Сад дышит ровнее</h2>
+          <div class="panel__body">
+            <ul class="stats" id="results-stats"></ul>
+          </div>
+          <div class="panel__foot">
+            <button class="btn" data-action="quit">
+              <span class="btn__label"><b>В меню</b></span>
+            </button>
+            <button class="btn btn--primary" data-action="replay">
+              <span class="btn__glyph">↺</span>
+              <span class="btn__label"><b>Пройти снова</b></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ПОВЕРНИТЕ УСТРОЙСТВО -->
+      <section class="screen screen--rotate" id="screen-rotate">
+        <div class="rotate">
+          <div class="rotate__phone"><i></i></div>
+          <p><b>Поверните устройство</b></p>
+          <p class="muted">Игра рассчитана на горизонтальную ориентацию</p>
+        </div>
+      </section>
+
+      <!-- ТОСТ ОБНОВЛЕНИЯ -->
+      <div class="toast" id="toast-update" hidden>
+        <span>Доступна новая версия</span>
+        <button class="toast__btn" data-action="update">Обновить</button>
+        <button class="toast__close" data-action="toast-dismiss" aria-label="Закрыть">×</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
