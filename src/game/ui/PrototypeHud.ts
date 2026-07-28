@@ -45,6 +45,9 @@ export class PrototypeHud extends Phaser.Scene {
   private uiOpacity = 0.9;
   private leftHanded = false;
   private touchVisible = false;
+  /** Пользовался ли игрок стиком — по этому признаку прячется подсказка. */
+  private stickEverUsed = false;
+  private hintPhase = 0;
 
   private hint: HintState | null = null;
   private titleTimer = 0;
@@ -265,7 +268,13 @@ export class PrototypeHud extends Phaser.Scene {
 
     if (!this.inputSystem) return;
 
-    this.touchVisible = this.inputSystem.touch.touchDetected;
+    const preference = settingsRepository.current.onScreenControls;
+    this.touchVisible =
+      preference === 'on'
+        ? true
+        : preference === 'off'
+          ? false
+          : this.inputSystem.touch.controlsVisible;
     const cutAvailable = this.getCutAvailable();
     const cutButton = this.layout.find((b) => b.id === 'cut');
     if (cutButton) cutButton.enabled = cutAvailable && this.touchVisible;
@@ -295,6 +304,7 @@ export class PrototypeHud extends Phaser.Scene {
     this.drawWebMeter(g, glow);
     this.drawTensionAlert(g);
 
+    this.hintPhase += deltaSeconds;
     this.updateTexts(deltaSeconds);
     this.grain.tilePositionX += delta * 0.02;
     this.grain.tilePositionY -= delta * 0.013;
@@ -309,7 +319,14 @@ export class PrototypeHud extends Phaser.Scene {
     const radius = (inputConfig.stickRadius / 2) * dp * 1.1;
     const maxOffset = inputConfig.stickMaxOffset * dp;
 
-    if (!stick.active && !settings.fixedStick) return;
+    if (stick.active) this.stickEverUsed = true;
+
+    // Плавающий стик появляется под пальцем, поэтому до первого касания на
+    // экране не было вообще ничего — игрок просто не догадывался, что левая
+    // половина и есть управление. Пока стик не использовали ни разу, на его
+    // месте дышит полупрозрачный «призрак» с подсказкой.
+    const showGhost = !stick.active && !settings.fixedStick && !this.stickEverUsed;
+    if (!stick.active && !settings.fixedStick && !showGhost) return;
 
     const originX = stick.active
       ? stick.originX
@@ -318,7 +335,8 @@ export class PrototypeHud extends Phaser.Scene {
         : 150 * dp;
     const originY = stick.active ? stick.originY : this.scale.height - 150 * dp;
 
-    const alpha = (stick.active ? 0.9 : 0.4) * this.uiOpacity;
+    const breathe = showGhost ? 0.55 + 0.45 * Math.sin(this.hintPhase * 2.4) : 1;
+    const alpha = (stick.active ? 0.9 : 0.42 * breathe) * this.uiOpacity;
 
     // Внешнее кольцо.
     g.lineStyle(2 * dp, PALETTE.uiSilk, 0.22 * alpha);
@@ -333,6 +351,21 @@ export class PrototypeHud extends Phaser.Scene {
       glow.fillStyle(PALETTE.uiAccent, 0.1 * alpha * magnitude);
       glow.slice(originX, originY, maxOffset, angle - 0.5, angle + 0.5, false);
       glow.fillPath();
+    }
+
+    if (showGhost) {
+      // Две стрелки по горизонтали: главное движение в игре — влево-вправо.
+      const reach = maxOffset * 0.72;
+      const tip = radius * 0.3;
+      g.lineStyle(2.2 * dp, PALETTE.uiSilk, 0.5 * alpha);
+      for (const side of [-1, 1]) {
+        const x = originX + side * reach;
+        g.beginPath();
+        g.moveTo(x - side * tip, originY - tip);
+        g.lineTo(x, originY);
+        g.lineTo(x - side * tip, originY + tip);
+        g.strokePath();
+      }
     }
 
     const knobX = originX + stick.valueX * maxOffset;

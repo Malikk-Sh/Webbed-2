@@ -54,6 +54,7 @@ export class SettingsRepository {
     merged.uiOpacity = Math.max(0.35, Math.min(1, merged.uiOpacity));
     merged.uiScale = Math.max(0.8, Math.min(1.4, merged.uiScale));
     if (!['low', 'medium', 'high'].includes(merged.quality)) merged.quality = 'medium';
+    if (!['auto', 'on', 'off'].includes(merged.onScreenControls)) merged.onScreenControls = 'auto';
     if (merged.frameCap !== 30 && merged.frameCap !== 60) merged.frameCap = 60;
     return merged;
   }

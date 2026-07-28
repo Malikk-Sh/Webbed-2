@@ -583,7 +583,9 @@ export class WebSystem {
     const base = 196;
     const frequency =
       base * Math.sqrt(0.35 + strand.tensionNormalized * 1.8) * (260 / Math.max(strand.restLength, 60));
-    strand.frequency = clamp(frequency, 90, 1400);
+    // Нижняя граница поднята до 140 Гц: ниже нота всё равно не звучит,
+    // а на динамике превращается в гул.
+    strand.frequency = clamp(frequency, 140, 1400);
 
     events.emit('web:pluck', {
       strandId,

@@ -40,6 +40,19 @@ const emptyButton = (): TouchButtonState => ({
 });
 
 /**
+ * Есть ли у устройства сенсорный ввод.
+ *
+ * Проверяются оба признака: `maxTouchPoints` знают все современные браузеры,
+ * а `pointer: coarse` дополнительно ловит планшеты и телевизоры, где
+ * основное устройство ввода — палец или пульт, а не точная мышь.
+ */
+const detectTouchCapableDevice = (): boolean => {
+  if (typeof navigator === 'undefined') return false;
+  if (navigator.maxTouchPoints > 0) return true;
+  return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+};
+
+/**
  * Сенсорный ввод на «сырых» Pointer Events.
  *
  * Phaser-овский ввод здесь не используется намеренно: игре нужен полноценный
@@ -65,8 +78,16 @@ export class TouchInputAdapter {
     pause: emptyButton(),
   };
 
-  /** Было ли хоть одно касание — интерфейс по этому признаку включает кнопки. */
-  touchDetected = false;
+  /**
+   * Показывать ли экранные органы управления.
+   *
+   * Раньше здесь стояло «было ли хоть одно касание по холсту», и это было
+   * ошибкой: первое касание игрока приходится на кнопку «Играть» в HTML-меню,
+   * а не на холст, поэтому игра начиналась вообще без видимых стика и кнопок.
+   * Теперь наличие сенсора определяется заранее по возможностям устройства,
+   * а любое нажатие по холсту лишь подтверждает догадку.
+   */
+  controlsVisible = detectTouchCapableDevice();
 
   private layout: TouchButtonLayout[] = [];
   private readonly pointerOwners = new Map<number, 'stick' | TouchButtonLayout['id']>();
@@ -189,10 +210,10 @@ export class TouchInputAdapter {
   }
 
   private handleDown(event: PointerEvent): void {
-    if (event.pointerType === 'touch' || event.pointerType === 'pen') this.touchDetected = true;
+    if (event.pointerType === 'touch' || event.pointerType === 'pen') this.controlsVisible = true;
     if (!this.enabled) return;
-    // Мышь обрабатывается отдельным адаптером; сенсорные кнопки ей не нужны.
-    if (event.pointerType === 'mouse' && !this.touchDetected) return;
+    // Правая и средняя кнопки мыши заняты прицеливанием — стик ведёт левая.
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
 
     const point = this.toCanvas(event);
     const button = this.hitButton(point.x, point.y);

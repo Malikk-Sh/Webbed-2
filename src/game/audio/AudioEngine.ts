@@ -77,7 +77,17 @@ export class AudioEngine {
     this.master = ctx.createGain();
     this.master.gain.value = this.masterVolume;
 
-    this.compressor.connect(this.master);
+    // Общий срез инфранизких частот. Динамик телефона их не воспроизводит,
+    // зато они съедают запас громкости и на любой колонке превращаются в
+    // грязный гул. Крутизна 12 дБ/окт. на 48 Гц убирает его, не трогая
+    // ни ноты нитей, ни удары.
+    const rumbleGuard = ctx.createBiquadFilter();
+    rumbleGuard.type = 'highpass';
+    rumbleGuard.frequency.value = 48;
+    rumbleGuard.Q.value = 0.7;
+
+    this.compressor.connect(rumbleGuard);
+    rumbleGuard.connect(this.master);
     this.master.connect(ctx.destination);
 
     for (const name of ['music', 'ambient', 'effects', 'web', 'ui'] as BusName[]) {
@@ -191,10 +201,11 @@ export class AudioEngine {
     rain.connect(rainFilter).connect(rainGain).connect(target);
     rain.start();
 
-    // Гул вентиляции: две расстроенные низкие волны.
+    // Гул вентиляции: две слегка расстроенные волны. Частота поднята со
+    // «звучащих» 55 Гц: на телефоне такой бас неслышен, но забивает микс.
     for (const [frequency, detune] of [
-      [55, 0],
-      [55.6, 8],
+      [110, 0],
+      [111.2, 8],
     ] as const) {
       const osc = ctx.createOscillator();
       osc.type = 'sine';
@@ -298,63 +309,90 @@ export class AudioEngine {
   // ------------------------------------------------------------------ нити
 
   /**
-   * Щипок нити.
+   * Щипок нити: аддитивный синтез из нескольких затухающих обертонов.
    *
-   * Модель Карплуса — Стронга: короткий шумовой импульс, зацикленный в линии
-   * задержки. Даёт настоящий струнный тембр при копеечной стоимости, а высота
-   * задаётся длиной задержки, то есть напрямую длиной и натяжением нити.
+   * Здесь раньше стояла модель Карплуса — Стронга с линией задержки в
+   * обратной связи. Она красиво звучит на бумаге, но коэффициент петли у неё
+   * складывался из усиления обратной связи (до 0.985) и резонансного подъёма
+   * фильтра нижних частот, и на длинных нитях с низкой нотой произведение
+   * переваливало за единицу. Петля вместо затухания раскачивалась — отсюда
+   * нарастающий низкочастотный гул при каждом выпуске паутины.
+   *
+   * Сумма затухающих синусов не имеет обратной связи вообще, поэтому
+   * разогнаться не может ни при каких параметрах, звучит так же «струнно»
+   * и обходится дешевле.
    */
   playStrandPluck(frequency: number, amplitude: number, brightness = 0.5): void {
     const ctx = this.context;
     const target = this.bus('web');
-    if (!ctx || !target || !this.noiseBuffer) return;
+    if (!ctx || !target) return;
     if (this.webVoices >= this.maxWebVoices || !this.claimVoice()) return;
 
     this.webVoices++;
     const now = ctx.currentTime;
-    const safeFrequency = clamp(frequency, 70, 1800);
-    const delayTime = 1 / safeFrequency;
+    // Нижняя граница держит ноту в слышимом диапазоне: ниже ~140 Гц телефонный
+    // динамик всё равно отдаёт только неприятное гудение.
+    const root = clamp(frequency, 140, 1600);
+    const level = clamp01(amplitude) * 0.22;
 
-    const noise = ctx.createBufferSource();
-    noise.buffer = this.noiseBuffer;
-    const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(amplitude * 0.5, now);
-    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + delayTime * 2.5);
+    const voice = ctx.createGain();
+    voice.gain.value = 1;
+    voice.connect(target);
 
-    const delay = ctx.createDelay(0.05);
-    delay.delayTime.value = delayTime;
+    // Обертоны слегка расстроены и затухают тем быстрее, чем выше —
+    // так ведёт себя реальная струна.
+    const partials: [number, number, number][] = [
+      [1, 1, 1.5],
+      [2.01, 0.42 + brightness * 0.2, 0.9],
+      [3.04, 0.2 + brightness * 0.18, 0.55],
+      [4.98, 0.08 + brightness * 0.12, 0.34],
+    ];
 
-    const feedback = ctx.createGain();
-    // Затухание: чем выше нота, тем короче звук — как у настоящей струны.
-    feedback.gain.value = clamp(0.965 - safeFrequency / 12000, 0.86, 0.985);
+    let longest = 0;
+    for (const [ratio, weight, decay] of partials) {
+      const partialFrequency = root * ratio;
+      if (partialFrequency > 12000) continue;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = partialFrequency;
 
-    const damper = ctx.createBiquadFilter();
-    damper.type = 'lowpass';
-    damper.frequency.value = 900 + brightness * 5200;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(level * weight, now + 0.006);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + decay);
 
-    const output = ctx.createGain();
-    output.gain.setValueAtTime(amplitude * 0.34, now);
-    output.gain.exponentialRampToValueAtTime(0.0001, now + 1.5);
+      osc.connect(gain).connect(voice);
+      osc.start(now);
+      osc.stop(now + decay + 0.05);
+      longest = Math.max(longest, decay);
+    }
 
-    noise.connect(noiseGain).connect(delay);
-    delay.connect(damper).connect(feedback).connect(delay);
-    delay.connect(output).connect(target);
+    // Короткий шумовой призвук — «касание» по нити.
+    if (this.noiseBuffer) {
+      const noise = ctx.createBufferSource();
+      noise.buffer = this.noiseBuffer;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = clamp(root * 4, 400, 6000);
+      filter.Q.value = 1.2;
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(level * 0.5, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+      noise.connect(filter).connect(gain).connect(voice);
+      noise.start(now);
+      noise.stop(now + 0.08);
+    }
 
-    noise.start(now);
-    noise.stop(now + 0.1);
-
+    const lifetimeMs = (longest + 0.1) * 1000;
     window.setTimeout(() => {
       this.webVoices = Math.max(0, this.webVoices - 1);
       try {
-        delay.disconnect();
-        feedback.disconnect();
-        damper.disconnect();
-        output.disconnect();
+        voice.disconnect();
       } catch {
         /* уже отключено */
       }
-    }, 1700);
-    this.releaseVoice(1700);
+    }, lifetimeMs);
+    this.releaseVoice(lifetimeMs);
   }
 
   playWebShoot(): void {
