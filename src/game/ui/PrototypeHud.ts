@@ -39,6 +39,9 @@ export class PrototypeHud extends Phaser.Scene {
   private hintText!: Phaser.GameObjects.Text;
   private titleText!: Phaser.GameObjects.Text;
   private fpsText!: Phaser.GameObjects.Text;
+  private diagnosticsText!: Phaser.GameObjects.Text;
+  /** Поставщик живых значений для панели диагностики. */
+  private diagnostics: (() => string) | null = null;
 
   private renderScale = 1;
   private uiScale = 1;
@@ -130,6 +133,19 @@ export class PrototypeHud extends Phaser.Scene {
       .setDepth(15)
       .setAlpha(0);
 
+    this.diagnosticsText = this.add
+      .text(0, 0, '', {
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: '12px',
+        color: '#9ff5ff',
+        backgroundColor: 'rgba(4,8,12,0.78)',
+        padding: { x: 8, y: 6 },
+        lineSpacing: 2,
+      })
+      .setOrigin(0, 0)
+      .setDepth(16)
+      .setVisible(false);
+
     this.fade = this.add
       .rectangle(0, 0, 10, 10, 0x04070a)
       .setOrigin(0, 0)
@@ -157,6 +173,11 @@ export class PrototypeHud extends Phaser.Scene {
     });
 
     this.layoutScreen();
+  }
+
+  /** Сцена передаёт сюда сборщик диагностики; HUD только рисует результат. */
+  setDiagnosticsSource(source: () => string): void {
+    this.diagnostics = source;
   }
 
   setRenderScale(scale: number): void {
@@ -206,6 +227,9 @@ export class PrototypeHud extends Phaser.Scene {
 
     this.fpsText.setPosition(12 * this.renderScale, 10 * this.renderScale);
     this.fpsText.setFontSize(Math.round(13 * this.renderScale));
+
+    this.diagnosticsText.setPosition(12 * this.renderScale, 34 * this.renderScale);
+    this.diagnosticsText.setFontSize(Math.round(12 * this.renderScale));
 
     this.buildLayout(width, height);
   }
@@ -673,6 +697,12 @@ export class PrototypeHud extends Phaser.Scene {
 
     if (settingsRepository.current.showFps) {
       this.fpsText.setText(`${Math.round(this.game.loop.actualFps)} FPS`);
+    }
+
+    const wantDiagnostics = settingsRepository.current.showDiagnostics;
+    this.diagnosticsText.setVisible(wantDiagnostics);
+    if (wantDiagnostics && this.diagnostics) {
+      this.diagnosticsText.setText(this.diagnostics());
     }
   }
 }

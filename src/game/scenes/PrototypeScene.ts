@@ -142,6 +142,10 @@ export class PrototypeScene extends Phaser.Scene {
       restitution: spiderBodyConfig.restitution,
       label: 'spider',
       inertia: Infinity,
+      // Персонажем управляет игрок, и заснуть он не вправе никогда. Порог
+      // задан на самом теле, чтобы гарантия пережила любые изменения
+      // общей настройки засыпания в конфигурации мира.
+      sleepThreshold: Infinity,
     });
     MatterLib.Body.setMass(this.spiderBody, spiderBodyConfig.mass);
     MatterLib.Composite.add(this.matter.world.localWorld, this.spiderBody);
@@ -194,6 +198,8 @@ export class PrototypeScene extends Phaser.Scene {
     this.applyQuality();
     this.scale.on(Phaser.Scale.Events.RESIZE, this.handleResize, this);
     this.handleResize();
+
+    this.hud.setDiagnosticsSource(() => this.buildDiagnostics());
 
     this.restartRoom();
     this.hud.showTitle(this.level.definition.title);
@@ -718,6 +724,33 @@ export class PrototypeScene extends Phaser.Scene {
       timeScale: this.smoothedTimeScale,
       particles: this.particles.count,
     });
+  }
+
+  /**
+   * Компактный срез состояния для панели диагностики.
+   *
+   * Панель включается в настройках и работает без клавиатуры — на телефоне
+   * отладочные F1–F10 недоступны, а понять, доходит ли ввод до героя и
+   * двигается ли тело, нужно именно там.
+   */
+  private buildDiagnostics(): string {
+    const input = this.inputSystem.frame;
+    const contact = this.spider.contact;
+    const velocity = this.spider.velocity;
+    const body = this.spiderBody;
+    const round = (value: number) => Math.round(value);
+
+    return [
+      `build ${__BUILD_ID__}`,
+      `fps ${round(this.game.loop.actualFps)}  dt ${this.game.loop.delta.toFixed(1)}ms  acc ${this.accumulatorMs.toFixed(1)}  run ${this.running}`,
+      `input src ${input.source}  move ${input.moveX.toFixed(2)},${input.moveY.toFixed(2)}  jump ${input.jumpHeld ? 1 : 0}  web ${input.webHeld ? 1 : 0}`,
+      `stick ${this.inputSystem.touch.stick.active ? 'on' : 'off'} ${this.inputSystem.touch.stick.valueX.toFixed(2)},${this.inputSystem.touch.stick.valueY.toFixed(2)}`,
+      `pos ${round(body.position.x)},${round(body.position.y)}  vel ${round(velocity.x)},${round(velocity.y)}`,
+      `body.v ${body.velocity.x.toFixed(2)},${body.velocity.y.toFixed(2)}  sleep ${body.isSleeping}  static ${body.isStatic}`,
+      `state ${this.stateMachine.current}  att ${this.spider.attached}  ctrl ${this.spider.canControl}`,
+      `surf ${contact?.surfaceId ?? '—'}  n ${contact ? `${contact.normal.x.toFixed(2)},${contact.normal.y.toFixed(2)}` : '—'}`,
+      `respawn ${this.respawnPhase}  prot ${round(this.inputProtectionMs)}  ts ${this.smoothedTimeScale.toFixed(2)}`,
+    ].join('\n');
   }
 
   private currentMood(): SpiderMood {

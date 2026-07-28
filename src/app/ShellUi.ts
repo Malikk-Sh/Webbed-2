@@ -324,6 +324,35 @@ export class ShellUi {
       'highContrastWeb',
       'Толще и ярче на любом фоне',
     );
+
+    const service = group('Диагностика');
+    toggle(
+      service,
+      'Панель состояния',
+      'showDiagnostics',
+      'Живые значения ввода и физики поверх игры',
+    );
+    this.addVersionRow(row(service, 'Версия сборки', __BUILD_ID__));
+  }
+
+  /**
+   * Строка сборки и принудительное обновление.
+   *
+   * Service worker держит игру офлайн, но из-за этого игрок может неделями
+   * сидеть на старой версии, если пропустил уведомление. Кнопка сбрасывает
+   * все кэши и перезагружает страницу — по номеру сборки сразу видно,
+   * помогло ли.
+   */
+  private addVersionRow(container: HTMLElement): void {
+    const button = document.createElement('button');
+    button.className = 'btn btn--ghost';
+    button.type = 'button';
+    button.style.width = 'auto';
+    button.innerHTML = '<span class="btn__label"><b>Обновить</b></span>';
+    button.addEventListener('click', () => {
+      void forceUpdate();
+    });
+    container.append(button);
   }
 
   /**
@@ -481,6 +510,23 @@ export const toggleFullscreen = async (): Promise<void> => {
   } catch (error) {
     console.warn('[Silkbound] Полноэкранный режим недоступен', error);
   }
+};
+
+/** Полный сброс кэшей и регистраций service worker с перезагрузкой. */
+export const forceUpdate = async (): Promise<void> => {
+  try {
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+  } catch (error) {
+    console.warn('[Silkbound] Не удалось очистить кэш', error);
+  }
+  location.reload();
 };
 
 export const formatTime = (ms: number): string => {

@@ -27,6 +27,8 @@ export interface GameSettings {
   quality: QualityLevel;
   frameCap: 30 | 60;
   showFps: boolean;
+  /** Живая панель состояния поверх игры — доступна без клавиатуры. */
+  showDiagnostics: boolean;
 
   slowMotionAiming: boolean;
   hintsEnabled: boolean;
@@ -57,6 +59,7 @@ export const defaultSettings: GameSettings = {
   quality: 'medium',
   frameCap: 60,
   showFps: false,
+  showDiagnostics: false,
 
   slowMotionAiming: true,
   hintsEnabled: true,
