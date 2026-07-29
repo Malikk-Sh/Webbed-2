@@ -629,10 +629,21 @@ body {
 
 .stats {
   display: grid;
-  gap: 0.1em;
+  gap: 0.1em 1.8em;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/*
+ * В альбомной ориентации телефона по высоте помещается шесть строк, а итогов
+ * девять — в одну колонку три последних уходили под кромку панели. Ширины при
+ * этом с запасом, поэтому список разворачивается в две колонки.
+ */
+@media (min-width: 620px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .stats li {

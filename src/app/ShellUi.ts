@@ -197,18 +197,16 @@ export class ShellUi {
     const title = document.getElementById('results-title');
     if (title) title.textContent = context.chapterTitle;
 
+    // Подписи короткие намеренно: список идёт в две колонки, и длинная
+    // подпись переносится на вторую строку, ломая ровную сетку итогов.
     const rows: [string, string, boolean][] = [
-      ['Время прохождения', formatTime(stats.timeMs), true],
-      [
-        'Лучшее время',
-        context.bestTimeMs !== null ? formatTime(context.bestTimeMs) : '—',
-        false,
-      ],
-      ['Шёлковые бутоны', `${stats.bloomsCollected} / ${stats.bloomsTotal}`, stats.bloomsTotal > 0],
+      ['Время', formatTime(stats.timeMs), true],
+      ['Лучшее', context.bestTimeMs !== null ? formatTime(context.bestTimeMs) : '—', false],
+      ['Бутоны', `${stats.bloomsCollected} / ${stats.bloomsTotal}`, stats.bloomsTotal > 0],
       ['Падений', String(stats.falls), false],
-      ['Создано нитей', String(stats.strandsCreated), false],
+      ['Нитей сплетено', String(stats.strandsCreated), false],
       ['Разрывов', String(stats.strandsBroken), false],
-      ['Больше всего нитей сразу', String(stats.peakStrands), false],
+      ['Пик нитей', String(stats.peakStrands), false],
       ['Прыжков', String(stats.jumps), false],
       ['На паутине', formatTime(stats.swingTimeMs), false],
     ];
