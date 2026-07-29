@@ -19,7 +19,6 @@ import { circleBody, type RigidBody } from '../../engine/physics/RigidBody';
 import { audio } from '../audio/AudioEngine';
 import { CameraController } from '../camera/CameraController';
 import type { InputSystem } from '../input/InputSystem';
-import levelData from '../../content/levels/prototype-room.json';
 import type { LevelDefinition } from '../level/LevelSchema';
 import { loadLevel, type LoadedLevel } from '../level/PrototypeLevelLoader';
 import type { RigidBodySnapshot } from '../objects/LevelObjects';
@@ -53,6 +52,8 @@ export interface SceneDeps {
   painter: Painter;
   input: InputSystem;
   hud: PrototypeHud;
+  /** Комната, которую играет сцена. Кампанию ведёт вызывающая сторона. */
+  level: LevelDefinition;
   getFps: () => number;
   onComplete: (stats: RunStats) => void;
   onPauseRequested: () => void;
@@ -107,6 +108,7 @@ export class PrototypeScene {
   private inputProtectionMs = 0;
 
   private stats: RunStats = emptyStats();
+  private readonly foregroundView = { x: 0, y: 0, width: 0, height: 0 };
 
   private timeScale = 1;
   private smoothedTimeScale = 1;
@@ -130,7 +132,7 @@ export class PrototypeScene {
       positionIterations: PHYSICS.positionIterations,
     });
 
-    this.level = loadLevel(levelData as unknown as LevelDefinition, this.physics);
+    this.level = loadLevel(deps.level, this.physics);
 
     this.spiderBody = this.physics.add(
       circleBody(0, 0, spiderBodyConfig.radius, {
@@ -190,7 +192,6 @@ export class PrototypeScene {
     this.hud.setDiagnosticsSource(() => this.buildDiagnostics());
 
     this.restartRoom();
-    this.hud.showTitle(this.level.definition.title);
 
     // Доступ к сцене из консоли разработчика и из браузерных тестов.
     (window as unknown as { silkboundScene?: PrototypeScene }).silkboundScene = this;
@@ -302,6 +303,7 @@ export class PrototypeScene {
       profile.rain,
       settings.reducedParticles ? 20 : profile.backgroundParticles,
     );
+    this.worldRenderer.setQuality(profile.parallaxLayers);
     this.webRenderer.setQuality(profile.webGlowPasses, profile.dewDrops, settings.highContrastWeb);
     this.spiderVisual.setQuality(profile.proceduralLegs);
     this.particles.setBudget(particleBudget);
@@ -324,6 +326,7 @@ export class PrototypeScene {
   }
 
   restartRoom(): void {
+    this.hud.resetTransient();
     this.web.reset();
     this.webController.reset();
     this.particles.clear();
@@ -336,6 +339,8 @@ export class PrototypeScene {
     for (const weight of this.level.weights) weight.restore();
     for (const plate of this.level.plates) plate.reset();
     for (const door of this.level.doors) door.reset();
+    for (const bloom of this.level.blooms) bloom.reset();
+    this.stats.bloomsTotal = this.level.blooms.length;
 
     this.createScriptedWeb();
 
@@ -352,6 +357,9 @@ export class PrototypeScene {
     this.cameraController.snapTo(this.spider.position);
     this.hud.setFade(0);
     this.respawnPhase = 'none';
+    // Название комнаты показывается именно отсюда: и при первом входе, и при
+    // перезапуске игрок должен видеть, где он.
+    this.hud.showTitle(this.level.definition.title);
     events.emit('level:restarted', {});
   }
 
@@ -364,6 +372,7 @@ export class PrototypeScene {
         requestedRestLength: weight.restLength,
         playerCreated: false,
         scripted: true,
+        cuttable: weight.cuttable,
       });
     }
   }
@@ -456,6 +465,8 @@ export class PrototypeScene {
     }
     for (const plate of this.level.plates) plate.reset();
     for (const door of this.level.doors) door.reset();
+    // Собранные бутоны при падении не теряются: это награда за исследование,
+    // а не ресурс, которым игрока наказывают за ошибку.
 
     this.createScriptedWeb();
     this.placeAtCheckpoint();
@@ -545,7 +556,8 @@ export class PrototypeScene {
       door.fixedUpdate(deltaSeconds, plate?.isActive() ?? false);
     }
 
-    // 6. Триггеры комнаты.
+    // 6. Сбор бутонов и триггеры комнаты.
+    this.updateBlooms();
     this.updateTriggers();
     this.stateMachine.update(deltaSeconds * 1000);
   }
@@ -562,6 +574,29 @@ export class PrototypeScene {
       webReleased: false,
       cutPressed: false,
     };
+  }
+
+  /**
+   * Сбор бутонов идёт в фиксированном шаге вместе с триггерами: на быстрой
+   * дуге маятника кадр может перекрыть весь радиус подбора, и в отрисовке
+   * бутон было бы легко пролететь насквозь.
+   */
+  private updateBlooms(): void {
+    if (this.respawnPhase !== 'none') return;
+    const position = this.spider.position;
+
+    for (const bloom of this.level.blooms) {
+      if (!bloom.tryCollect(position)) continue;
+      this.stats.bloomsCollected++;
+      this.particles.burstSparkle({ x: bloom.x, y: bloom.y }, PALETTE.anchorIdle, 22);
+      audio.playUi('confirm');
+      events.emit('object:bloom-collected', {
+        bloomId: bloom.id,
+        position: { x: bloom.x, y: bloom.y },
+        collected: this.stats.bloomsCollected,
+        total: this.stats.bloomsTotal,
+      });
+    }
   }
 
   private updateTriggers(): void {
@@ -684,7 +719,7 @@ export class PrototypeScene {
     const painter = this.painter;
     const ratio = this.surface.pixelRatio;
 
-    this.surface.clear(cssColor(PALETTE.skyTop, 1));
+    this.surface.clear(cssColor(this.background.clearColor, 1));
     painter.bind(this.surface.ctx);
 
     // --- фон со своими множителями параллакса ---------------------------
@@ -706,10 +741,11 @@ export class PrototypeScene {
     this.worldRenderer.drawStaticLayers(painter, view);
     this.worldRenderer.drawGrass(painter, view);
     painter.setBlendMode('add');
-    this.worldRenderer.drawGlow(painter, time);
+    this.worldRenderer.drawGlow(painter, time, view);
     painter.setBlendMode('normal');
 
     // --- объекты ----------------------------------------------------------
+    for (const bloom of this.level.blooms) bloom.update(deltaSeconds);
     this.objectRenderer.draw(painter, time);
 
     // --- паутина ----------------------------------------------------------
@@ -732,6 +768,16 @@ export class PrototypeScene {
       time,
       this.spiderVisual.getSpinneretWorld(),
     );
+
+    // --- передний план ------------------------------------------------------
+    // Идёт после героини и своей матрицей: он обгоняет мир и должен её
+    // перекрывать, иначе никакой глубины не получится.
+    if (this.worldRenderer.hasForeground) {
+      const scroll = WorldRenderer.foregroundScroll;
+      this.camera.applyTo(painter.ctx, ratio, scroll);
+      this.worldRenderer.drawForeground(painter, this.camera.viewFor(scroll, this.foregroundView));
+      this.camera.applyTo(painter.ctx, ratio, 1);
+    }
 
     this.debugOverlay.drawWorld(painter, {
       spider: this.spider,
@@ -950,4 +996,6 @@ const emptyStats = (): RunStats => ({
   peakStrands: 0,
   jumps: 0,
   swingTimeMs: 0,
+  bloomsCollected: 0,
+  bloomsTotal: 0,
 });

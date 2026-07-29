@@ -85,6 +85,8 @@ export class HangingWeight implements DynamicObject {
     mass: number,
     anchor: Vector2,
     restLength: number,
+    /** Можно ли перерезать подвес — этим комната задаёт свою головоломку. */
+    readonly cuttable = false,
   ) {
     this.radius = radius;
     this.anchor = anchor;
@@ -185,6 +187,52 @@ export class PressurePlate {
     this.currentMass = 0;
     this.depression = 0;
     this.timerMs = 0;
+  }
+}
+
+/**
+ * Шёлковый бутон — необязательный сбор.
+ *
+ * Нужен ровно затем, чтобы у украшенных закоулков появилась причина туда
+ * лезть: без цели декорации остаются фоном, мимо которого пробегают по
+ * кратчайшей траектории. Физического тела у бутона нет — он собирается по
+ * расстоянию до героини, и потому не влияет ни на решатель, ни на кнопки.
+ */
+export class SilkBloom {
+  collected = false;
+  /** 0..1 — раскрытие при сборе, для вспышки и растворения. */
+  bloom = 0;
+  readonly phase: number;
+
+  constructor(
+    readonly id: string,
+    readonly x: number,
+    readonly y: number,
+    readonly radius = 30,
+  ) {
+    // Фаза покачивания берётся из координат: одинаковые бутоны, дышащие в
+    // такт, сразу выдают, что их поставил цикл.
+    this.phase = (x * 0.013 + y * 0.021) % (Math.PI * 2);
+  }
+
+  update(deltaSeconds: number): void {
+    if (!this.collected || this.bloom >= 1) return;
+    this.bloom = Math.min(1, this.bloom + deltaSeconds * 2.6);
+  }
+
+  /** Возвращает true только в тот кадр, когда бутон действительно собран. */
+  tryCollect(position: Vector2): boolean {
+    if (this.collected) return false;
+    const dx = position.x - this.x;
+    const dy = position.y - this.y;
+    if (dx * dx + dy * dy > this.radius * this.radius) return false;
+    this.collected = true;
+    return true;
+  }
+
+  reset(): void {
+    this.collected = false;
+    this.bloom = 0;
   }
 }
 

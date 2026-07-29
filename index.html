@@ -46,7 +46,7 @@
       <section class="screen screen--menu" id="screen-menu">
         <div class="menu">
           <header class="menu__head">
-            <p class="menu__eyebrow">играбельный прототип · 0.1</p>
+            <p class="menu__eyebrow">четыре главы · 0.2</p>
             <h1 class="menu__title">
               <span>Silk</span><span class="accent">bound</span>
             </h1>
@@ -58,7 +58,14 @@
               <span class="btn__glyph">▶</span>
               <span class="btn__label">
                 <b>Играть</b>
-                <i id="menu-play-note">Тестовая комната</i>
+                <i id="menu-play-note">Глава I · Оранжерея</i>
+              </span>
+            </button>
+            <button class="btn" data-action="chapters">
+              <span class="btn__glyph">☰</span>
+              <span class="btn__label">
+                <b>Главы</b>
+                <i id="menu-chapters-note">Четыре комнаты сада</i>
               </span>
             </button>
             <button class="btn" data-action="settings">
@@ -107,6 +114,21 @@
             <button class="btn btn--ghost" data-action="quit">
               <span class="btn__glyph">⌂</span>
               <span class="btn__label"><b>В главное меню</b></span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ГЛАВЫ -->
+      <section class="screen screen--dialog" id="screen-chapters">
+        <div class="panel panel--wide">
+          <h2 class="panel__title">Главы</h2>
+          <div class="panel__body panel__body--scroll">
+            <div class="chapters" id="chapters-list"></div>
+          </div>
+          <div class="panel__foot">
+            <button class="btn btn--primary" data-action="close">
+              <span class="btn__label"><b>Назад</b></span>
             </button>
           </div>
         </div>
@@ -177,8 +199,8 @@
       <!-- РЕЗУЛЬТАТЫ -->
       <section class="screen screen--dialog" id="screen-results">
         <div class="panel">
-          <p class="panel__eyebrow">Комната пройдена</p>
-          <h2 class="panel__title">Сад дышит ровнее</h2>
+          <p class="panel__eyebrow" id="results-eyebrow">Комната пройдена</p>
+          <h2 class="panel__title" id="results-title">Сад дышит ровнее</h2>
           <div class="panel__body">
             <ul class="stats" id="results-stats"></ul>
           </div>
@@ -186,9 +208,13 @@
             <button class="btn" data-action="quit">
               <span class="btn__label"><b>В меню</b></span>
             </button>
-            <button class="btn btn--primary" data-action="replay">
+            <button class="btn" data-action="replay">
               <span class="btn__glyph">↺</span>
               <span class="btn__label"><b>Пройти снова</b></span>
+            </button>
+            <button class="btn btn--primary" data-action="next" id="btn-next-chapter">
+              <span class="btn__glyph">→</span>
+              <span class="btn__label"><b>Дальше</b><i id="next-chapter-note"></i></span>
             </button>
           </div>
         </div>

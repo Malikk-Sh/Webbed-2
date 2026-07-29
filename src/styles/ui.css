@@ -866,3 +866,93 @@ kbd {
     transition-duration: 0.06s !important;
   }
 }
+
+/* ГЛАВЫ ------------------------------------------------------------------ */
+
+.chapters {
+  display: grid;
+  gap: calc(10px * var(--ui-scale));
+}
+
+.chapter {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: calc(14px * var(--ui-scale));
+  width: 100%;
+  padding: calc(13px * var(--ui-scale)) calc(16px * var(--ui-scale));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--silk-200);
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.2s var(--ease-out),
+    background 0.2s var(--ease-out),
+    transform 0.12s var(--ease-out);
+}
+
+.chapter:hover {
+  border-color: rgba(127, 230, 255, 0.3);
+  background: rgba(127, 230, 255, 0.07);
+}
+
+.chapter:active {
+  transform: translateY(1px);
+}
+
+.chapter.is-current {
+  border-color: rgba(127, 230, 255, 0.42);
+  background: linear-gradient(135deg, rgba(99, 201, 160, 0.16), rgba(127, 230, 255, 0.09));
+}
+
+/* Заблокированная глава остаётся видимой: список — это ещё и карта пути. */
+.chapter[disabled] {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.chapter__numeral {
+  min-width: calc(34px * var(--ui-scale));
+  font-family: var(--font-display);
+  font-size: calc(21px * var(--ui-scale));
+  color: var(--bloom);
+  text-align: center;
+}
+
+.chapter[disabled] .chapter__numeral {
+  color: var(--silk-600);
+}
+
+.chapter__text b {
+  display: block;
+  font-size: calc(15px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--silk-100);
+}
+
+.chapter__text i {
+  display: block;
+  margin-top: 2px;
+  font-size: calc(12px * var(--ui-scale));
+  font-style: normal;
+  line-height: 1.35;
+  color: var(--silk-400);
+}
+
+.chapter__mark {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  font-size: calc(11.5px * var(--ui-scale));
+  color: var(--silk-400);
+  white-space: nowrap;
+}
+
+.chapter__mark b {
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 600;
+  color: var(--moss);
+}

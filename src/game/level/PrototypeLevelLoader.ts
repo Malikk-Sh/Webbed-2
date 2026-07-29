@@ -5,6 +5,7 @@ import {
   HangingWeight,
   PressurePlate,
   PrototypeDoor,
+  SilkBloom,
 } from '../objects/LevelObjects';
 import { CollisionWorld } from '../physics/CollisionWorld';
 import { getMaterial } from '../physics/PhysicsMaterials';
@@ -30,6 +31,7 @@ export interface LoadedLevel {
   weights: HangingWeight[];
   plates: PressurePlate[];
   doors: PrototypeDoor[];
+  blooms: SilkBloom[];
   anchors: AnchorPoint[];
   polygons: { polygon: Polygon; materialId: string; id: string }[];
 }
@@ -94,6 +96,7 @@ export const loadLevel = (
   const weights: HangingWeight[] = [];
   const plates: PressurePlate[] = [];
   const doors: PrototypeDoor[] = [];
+  const blooms: SilkBloom[] = [];
 
   for (const object of definition.objects) {
     const props = object.properties ?? {};
@@ -123,6 +126,7 @@ export const loadLevel = (
             num(props.mass, 2.4),
             { x: num(props.anchorX, object.x), y: num(props.anchorY, object.y - 160) },
             num(props.restLength, 160),
+            props.cuttable === true,
           ),
         );
         break;
@@ -137,6 +141,10 @@ export const loadLevel = (
             num(props.activationMass, 1),
           ),
         );
+        break;
+
+      case 'silk-bloom':
+        blooms.push(new SilkBloom(object.id, object.x, object.y, num(props.radius, 30)));
         break;
 
       case 'prototype-door':
@@ -170,6 +178,7 @@ export const loadLevel = (
     weights,
     plates,
     doors,
+    blooms,
     anchors,
     polygons,
   };

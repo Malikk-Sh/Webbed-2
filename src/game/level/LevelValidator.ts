@@ -1,5 +1,24 @@
 import { isMaterialId } from '../physics/PhysicsMaterials';
-import type { LevelDefinition } from './LevelSchema';
+import type { LevelDecorType, LevelDefinition } from './LevelSchema';
+import { isThemeId } from './LevelTheme';
+
+const DECOR_TYPES: readonly LevelDecorType[] = [
+  'plant',
+  'vine',
+  'pot',
+  'glass-pane',
+  'root',
+  'lamp',
+  'grass',
+  'mushroom',
+  'crystal',
+  'cobweb',
+  'chain',
+  'banner',
+  'debris',
+  'fern',
+  'stalactite',
+];
 
 export class LevelValidationError extends Error {
   constructor(
@@ -32,6 +51,9 @@ export const validateLevel = (level: LevelDefinition): void => {
   }
   if (!level.cameraBounds || level.cameraBounds.width <= 0) {
     throw new LevelValidationError('cameraBounds отсутствует', null);
+  }
+  if (level.theme !== undefined && !isThemeId(level.theme)) {
+    throw new LevelValidationError(`Неизвестная тема «${level.theme}»`, null);
   }
 
   const insideWorld = (x: number, y: number, id: string) => {
@@ -160,4 +182,16 @@ export const validateLevel = (level: LevelDefinition): void => {
 
   if (!hasDeathZone) throw new LevelValidationError('В комнате нет зоны падения', null);
   if (!hasExit) throw new LevelValidationError('В комнате нет выхода', null);
+
+  // Декор не участвует в игре, но опечатка в типе тихо съедала бы элемент:
+  // он просто не рисовался бы, и найти это можно было бы только глазами.
+  for (const decor of level.decor ?? []) {
+    requireUniqueId(decor.id, 'Декор');
+    if (!DECOR_TYPES.includes(decor.type)) {
+      throw new LevelValidationError(`Неизвестный тип декора «${decor.type}»`, decor.id);
+    }
+    if (decor.layer !== undefined && ![0, 1, 2].includes(decor.layer)) {
+      throw new LevelValidationError(`У декора «${decor.id}» неверный слой`, decor.id);
+    }
+  }
 };

@@ -39,12 +39,14 @@ export class ObjectRenderer {
     this.drawWeights(painter);
     this.drawPlates(painter, time);
     this.drawDoors(painter);
+    this.drawBlooms(painter, time);
     this.drawSprout(painter, exit, time, pulse);
 
     painter.setBlendMode('add');
     this.drawWeightGlow(painter);
     this.drawPlateGlow(painter, time);
     this.drawDoorGlow(painter);
+    this.drawBloomGlow(painter, time);
     painter.fillStyle(PALETTE.exitGlow, 0.3);
     painter.fillCircle(exit.x + Math.sin(time / 1400) * 6, exit.y - 46, 22 + pulse * 8);
     painter.setBlendMode('normal');
@@ -250,6 +252,63 @@ export class ObjectRenderer {
       const gap = easeOutCubic(door.openness) * door.height;
       painter.fillStyle(PALETTE.exitGlow, 0.28 * door.openness);
       painter.fillRect(door.x, door.y + door.height - gap, door.width, gap);
+    }
+  }
+
+  /**
+   * Шёлковые бутоны.
+   *
+   * Закрытый бутон покачивается на месте; при сборе лепестки распахиваются и
+   * он растворяется. Раскрытие и угасание идут одной величиной `bloom`,
+   * поэтому вспышка всегда попадает в момент исчезновения.
+   */
+  private drawBlooms(g: Painter, time: number): void {
+    for (const bloom of this.level.blooms) {
+      if (bloom.collected && bloom.bloom >= 1) continue;
+      const open = easeOutCubic(bloom.bloom);
+      const alpha = 1 - bloom.bloom;
+      const y = bloom.y + Math.sin(time / 900 + bloom.phase) * 4;
+      const petals = 5;
+      const length = 15 + open * 20;
+
+      for (let i = 0; i < petals; i++) {
+        // Закрытый бутон — узкий пучок вверх; раскрытый расходится по кругу.
+        const spread = (i / petals - 0.5) * (0.9 + open * 5.4);
+        const angle = -Math.PI / 2 + spread;
+        const tipX = bloom.x + Math.cos(angle) * length;
+        const tipY = y + Math.sin(angle) * length;
+        const half = (5 + open * 4) * (1 - open * 0.35);
+
+        g.fillStyle(mixColor(PALETTE.silk, PALETTE.anchorIdle, i / petals), 0.85 * alpha);
+        g.beginPath();
+        g.moveTo(bloom.x, y + 6);
+        g.lineTo(bloom.x + Math.cos(angle - 1.2) * half, y + Math.sin(angle - 1.2) * half);
+        g.lineTo(tipX, tipY);
+        g.lineTo(bloom.x + Math.cos(angle + 1.2) * half, y + Math.sin(angle + 1.2) * half);
+        g.closePath();
+        g.fillPath();
+      }
+
+      g.fillStyle(PALETTE.silkTense, 0.9 * alpha);
+      g.fillCircle(bloom.x, y, 5 - open * 2);
+
+      // Ножка: бутон растёт из воздуха на короткой нити.
+      g.lineStyle(1.6, PALETTE.silkSlack, 0.5 * alpha);
+      g.beginPath();
+      g.moveTo(bloom.x, y + 6);
+      g.lineTo(bloom.x, y + 22);
+      g.strokePath();
+    }
+  }
+
+  private drawBloomGlow(painter: Painter, time: number): void {
+    for (const bloom of this.level.blooms) {
+      if (bloom.collected && bloom.bloom >= 1) continue;
+      const pulse = 0.5 + 0.5 * Math.sin(time / 700 + bloom.phase);
+      const flash = easeOutCubic(bloom.bloom);
+      const alpha = (0.16 + pulse * 0.12) * (1 - bloom.bloom) + flash * (1 - flash) * 1.4;
+      painter.fillStyle(PALETTE.anchorIdle, alpha);
+      painter.fillCircle(bloom.x, bloom.y, 26 + pulse * 5 + flash * 60);
     }
   }
 

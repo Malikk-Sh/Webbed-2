@@ -66,6 +66,19 @@ export class Painter {
     return this;
   }
 
+  /**
+   * Матрица «одна единица — один CSS-пиксель».
+   *
+   * Нужна слоям, которые рисуются в экранных координатах посреди мирового
+   * кадра: дымка, засветы, полноэкранные перекрытия. Без неё пришлось бы
+   * пересчитывать края экрана в мировые координаты на каждом множителе
+   * параллакса — и получать разный результат на разных плотностях пикселей.
+   */
+  resetTransform(pixelRatio: number): this {
+    this.ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    return this;
+  }
+
   translate(x: number, y: number): void {
     this.ctx.translate(x, y);
   }

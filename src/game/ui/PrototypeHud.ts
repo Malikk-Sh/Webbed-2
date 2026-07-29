@@ -64,6 +64,9 @@ export class PrototypeHud {
   private limitFlash = 0;
   private tensionAlert = 0;
   private fadeAlpha = 0;
+  /** Счётчик бутонов: всплывает на пару секунд после сбора. */
+  private bloomText = '';
+  private bloomTimer = 0;
   private grainOffsetX = 0;
   private grainOffsetY = 0;
   private grainPattern: CanvasPattern | null = null;
@@ -99,6 +102,10 @@ export class PrototypeHud {
       events.on('web:tension-critical', () => {
         this.tensionAlert = 1;
       }),
+      events.on('object:bloom-collected', ({ collected, total }) => {
+        this.bloomText = `✿ ${collected} / ${total}`;
+        this.bloomTimer = 2.4;
+      }),
     );
 
     settingsRepository.onChange((settings) => {
@@ -129,6 +136,27 @@ export class PrototypeHud {
     this.height = Math.max(1, height);
     this.hintLines = [];
     this.buildLayout();
+  }
+
+  /**
+   * Сброс всего, что живёт одну комнату.
+   *
+   * Интерфейс общий для всей кампании: без сброса подсказка, показанная в
+   * прошлой главе, доезжает до следующей и висит поверх чужой комнаты.
+   */
+  resetTransient(): void {
+    this.hint = null;
+    this.hintLines = [];
+    this.hintSource = '';
+    this.title = '';
+    this.titleTimer = 0;
+    this.bloomText = '';
+    this.bloomTimer = 0;
+    this.limitFlash = 0;
+    this.tensionAlert = 0;
+    this.cutPulse = 0;
+    this.webPulse = 0;
+    this.jumpPulse = 0;
   }
 
   showTitle(text: string): void {
@@ -228,6 +256,7 @@ export class PrototypeHud {
       if (this.hint.alpha < 0.01 && this.hint.target === 0) this.hint = null;
     }
     if (this.titleTimer > 0) this.titleTimer -= deltaSeconds;
+    if (this.bloomTimer > 0) this.bloomTimer -= deltaSeconds;
   }
 
   // ------------------------------------------------------------- отрисовка
@@ -676,6 +705,18 @@ export class PrototypeHud {
       painter.setTextAlign('center', 'middle');
       painter.fillStyle(0xf2f8fb, clamp01(alpha) * 0.95);
       painter.fillText(this.title, this.width / 2, this.height * 0.3);
+    }
+
+    if (this.bloomTimer > 0) {
+      // Счётчик держится ярким почти всё время и гаснет только в конце: он
+      // подтверждает сбор, а не соревнуется за внимание с игрой. Правый
+      // верхний угол — единственное место, где он не наезжает ни на
+      // подсказку, ни на название комнаты, ни на кнопки.
+      const alpha = clamp01(this.bloomTimer / 0.6);
+      painter.setFont(`${Math.round(19 * dp)}px ${SERIF}`);
+      painter.setTextAlign('right', 'middle');
+      painter.fillStyle(PALETTE.anchorIdle, alpha * 0.92);
+      painter.fillText(this.bloomText, this.width - 22 * dp, 30 * dp);
     }
 
     if (settingsRepository.current.showFps) {

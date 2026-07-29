@@ -164,6 +164,7 @@ export class WebSystem {
       active: true,
       playerCreated: request.playerCreated,
       scripted: request.scripted ?? false,
+      cuttable: request.cuttable ?? request.playerCreated,
       pulsePosition: 0,
       pulseEnergy: 0,
       ageMs: 0,
@@ -251,7 +252,7 @@ export class WebSystem {
     events.emit('web:broken', { strandId, position: midpoint, cause });
   }
 
-  /** Разрезает ближайшую к точке нить игрока. Возвращает её ID. */
+  /** Разрезает ближайшую к точке нить. Возвращает её ID. */
   cutNearestStrand(position: Vector2, radius: number = webConfig.cutRadius): number | null {
     const found = this.findNearestStrand(position, radius, true);
     if (found === null) return null;
@@ -259,13 +260,19 @@ export class WebSystem {
     return found;
   }
 
-  /** Ближайшая нить к точке; `playerOnly` исключает сюжетные нити уровня. */
-  findNearestStrand(position: Vector2, radius: number, playerOnly: boolean): number | null {
+  /**
+   * Ближайшая нить к точке.
+   *
+   * `cuttableOnly` оставляет нити игрока и те сюжетные, которые комната сама
+   * объявила частью задачи: подвес груза резать можно, декоративную растяжку —
+   * нет.
+   */
+  findNearestStrand(position: Vector2, radius: number, cuttableOnly: boolean): number | null {
     let bestId: number | null = null;
     let bestDist = radius;
 
     for (const strand of this.graph.allStrands) {
-      if (playerOnly && !strand.playerCreated) continue;
+      if (cuttableOnly && !strand.cuttable) continue;
       const ids = strand.particleIds;
       for (let i = 0; i < ids.length - 1; i++) {
         const a = this.graph.getParticle(ids[i]!);
@@ -655,6 +662,7 @@ export class WebSystem {
         restLength: strand.restLength,
         playerCreated: strand.playerCreated,
         scripted: strand.scripted,
+        cuttable: strand.cuttable,
       });
     }
     return { version: 1, nodes, strands };
@@ -684,6 +692,7 @@ export class WebSystem {
         requestedRestLength: saved.restLength,
         playerCreated: saved.playerCreated,
         scripted: saved.scripted,
+        cuttable: saved.cuttable,
       });
     }
   }

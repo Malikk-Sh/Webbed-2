@@ -70,6 +70,15 @@ export interface WebStrand {
   /** Нить создана уровнем и восстанавливается при перезапуске. */
   scripted: boolean;
 
+  /**
+   * Можно ли перерезать нить ножницами.
+   *
+   * У игрока режется всё своё, а из сюжетных нитей — только те, что комната
+   * объявила частью задачи. Иначе одно случайное нажатие уронило бы
+   * декоративную подвеску и оставило комнату в неразрешимом состоянии.
+   */
+  cuttable: boolean;
+
   /** Бегущий световой импульс: положение вдоль нити 0..1 и яркость. */
   pulsePosition: number;
   pulseEnergy: number;
@@ -99,6 +108,7 @@ export interface SavedWebStrand {
   restLength: number;
   playerCreated: boolean;
   scripted: boolean;
+  cuttable: boolean;
 }
 
 export interface SavedWebGraph {
@@ -129,6 +139,7 @@ export interface CreateStrandRequest {
   requestedRestLength?: number;
   playerCreated: boolean;
   scripted?: boolean;
+  cuttable?: boolean;
 }
 
 export type CreateStrandFailure =
