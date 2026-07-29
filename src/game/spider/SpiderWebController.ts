@@ -136,7 +136,11 @@ export class SpiderWebController {
 
     if (input.webHeld) {
       this.aimHoldMs += deltaMs;
-      if (!this.aiming && this.aimHoldMs >= aimConfig.holdThresholdMs) {
+      // Прицеливание включает либо удержание, либо протяжка. Второе важнее:
+      // игрок, потянувший палец в сторону, уже выбрал направление, и ждать
+      // порога удержания ему незачем.
+      const dragged = input.aimStrength >= aimConfig.dragThreshold;
+      if (!this.aiming && (dragged || this.aimHoldMs >= aimConfig.holdThresholdMs)) {
         this.aiming = true;
         events.emit('aim:started', {});
       }

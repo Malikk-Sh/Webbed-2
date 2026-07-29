@@ -38,6 +38,12 @@ export class SpiderController {
 
   /** Сглаженный визуальный угол корпуса. */
   visualAngle = 0;
+  /**
+   * Куда для героя «вверх» прямо сейчас: опорная нормаль, направление на
+   * точку крепления нити или мировой верх в свободном падении. Из этого
+   * вектора выводятся и угол корпуса, и направление взгляда.
+   */
+  readonly orientationUp: Vector2 = { x: 0, y: -1 };
   /** Точка крепления активной нити — задаётся сценой для ориентации корпуса. */
   tetherAnchor: Vector2 | null = null;
   /** Насколько герой «сжат» после удара, 0..1 — читает визуализация. */
@@ -59,7 +65,16 @@ export class SpiderController {
   private controlLockMs = 0;
   private distanceTravelled = 0;
   private stepAccumulator = 0;
-  /** Направление взгляда: +1 вправо вдоль касательной, -1 влево. */
+  /**
+   * Направление взгляда в системе координат самого героя: +1 — вперёд вдоль
+   * локальной оси X, −1 — назад.
+   *
+   * Именно локальное, а не экранное. Корпус рисуется в системе, повёрнутой
+   * опорной нормалью, и на потолке локальная ось X смотрит влево по экрану.
+   * Пока знак брался из мировой координаты X, на потолке паучиха шла задом
+   * наперёд, а на стене, где у касательной мировой X около нуля, знак ещё и
+   * дрожал от кадра к кадру.
+   */
   facing = 1;
 
   constructor(deps: SpiderControllerDeps) {
@@ -162,6 +177,10 @@ export class SpiderController {
     const allowAttach = this.detachCooldownMs <= 0 && !tethered;
     this.updateAttachment(contact, allowAttach, deltaMs);
 
+    // Ориентация считается до движения: от неё зависит, какое направление
+    // взгляда получится из ввода.
+    this.updateOrientationUp(contact, tethered);
+
     if (input.jumpPressed) this.jumpBufferMs = spiderMovementConfig.jumpBufferMs;
     else this.jumpBufferMs = Math.max(0, this.jumpBufferMs - deltaMs);
 
@@ -178,7 +197,7 @@ export class SpiderController {
 
     this.applyVelocityToBody();
     this.resolvePenetration();
-    this.updateVisualAngle(contact, deltaSeconds, tethered);
+    this.updateVisualAngle(deltaSeconds);
     this.updateStepEvents(deltaSeconds);
 
     // Сглаженное ускорение нужно визуализации: по нему корпус наклоняется
@@ -295,7 +314,11 @@ export class SpiderController {
 
     if (Math.abs(along) > 0.02) {
       this.sensor.alignTangent({ x: base.x * Math.sign(along), y: base.y * Math.sign(along) });
-      this.facing = base.x * Math.sign(along) >= 0 ? 1 : -1;
+      // `base` — это и есть локальная ось X героя на поверхности: угол корпуса
+      // задан как atan2(n.x, −n.y), а её направление в мире равно (−n.y, n.x).
+      // Поэтому знак проекции стика на касательную — готовое локальное
+      // направление взгляда, и переводить его через мировые оси не нужно.
+      this.facing = along >= 0 ? 1 : -1;
     }
 
     const tangent = { x: base.x, y: base.y };
@@ -357,7 +380,12 @@ export class SpiderController {
         if (this.velocity.x < target) this.velocity.x = Math.min(target, this.velocity.x + step);
         else if (this.velocity.x > target) this.velocity.x = Math.max(target, this.velocity.x - step);
       }
-      this.facing = desired >= 0 ? 1 : -1;
+      this.updateFacing({ x: desired, y: 0 });
+    } else if (tethered) {
+      // На нити «вверх» указывает на точку крепления, поэтому локальная ось X
+      // идёт по касательной к дуге. Взгляд следует за движением по дуге, иначе
+      // на раскачивании Люма висела бы спиной вперёд.
+      this.updateFacing(this.velocity);
     }
 
     if (!tethered) this.state.request('Airborne');
@@ -452,30 +480,62 @@ export class SpiderController {
    * нормалью: `atan2(n.x, -n.y)`. На полу это ноль, на левой стене −90°,
    * на потолке 180° — мир при этом не вращается, вращается только Люма.
    */
-  private updateVisualAngle(
-    contact: SurfaceContact | null,
-    deltaSeconds: number,
-    tethered: boolean,
-  ): void {
-    let up: Vector2;
+  /** Куда для героя «вверх»: опора, точка крепления нити или мировой верх. */
+  private updateOrientationUp(contact: SurfaceContact | null, tethered: boolean): void {
+    const up = this.orientationUp;
 
     if (this.attached && contact) {
-      up = contact.normal;
-    } else if (tethered && this.tetherAnchor) {
+      up.x = contact.normal.x;
+      up.y = contact.normal.y;
+      return;
+    }
+
+    if (tethered && this.tetherAnchor) {
       // На нити Люма висит «макушкой» к точке крепления.
       const dx = this.tetherAnchor.x - this.body.position.x;
       const dy = this.tetherAnchor.y - this.body.position.y;
       const len = Math.hypot(dx, dy) || 1;
-      up = { x: dx / len, y: dy / len };
-    } else {
-      // В свободном падении герой разворачивается брюшком вниз, слегка
-      // наклоняясь по направлению полёта.
-      const speed = length(this.velocity);
-      const tilt = speed > 40 ? clamp(this.velocity.x / 900, -0.4, 0.4) : 0;
-      up = { x: tilt, y: -1 };
+      up.x = dx / len;
+      up.y = dy / len;
+      return;
     }
 
-    const targetAngle = Math.atan2(up.x, -up.y);
+    // В свободном падении герой разворачивается брюшком вниз, слегка
+    // наклоняясь по направлению полёта.
+    const speed = length(this.velocity);
+    const tilt = speed > 40 ? clamp(this.velocity.x / 900, -0.4, 0.4) : 0;
+    const len = Math.hypot(tilt, 1);
+    up.x = tilt / len;
+    up.y = -1 / len;
+  }
+
+  /**
+   * Разворот по желаемому направлению движения в мире.
+   *
+   * Направление проецируется на локальную ось X героя. Её мировое
+   * направление — (−up.y, up.x): угол корпуса задан как atan2(up.x, −up.y),
+   * а косинус и синус этого угла дают ровно эту пару. Благодаря проекции
+   * правило «смотрю туда, куда иду» работает одинаково на полу, на потолке,
+   * на стене и на раскачивающейся нити.
+   */
+  private updateFacing(worldDirection: Vector2): void {
+    const magnitude = Math.hypot(worldDirection.x, worldDirection.y);
+    if (magnitude < 1e-3) return;
+
+    const forwardX = -this.orientationUp.y;
+    const forwardY = this.orientationUp.x;
+    const projection =
+      (worldDirection.x * forwardX + worldDirection.y * forwardY) / magnitude;
+
+    // Порог на единичной проекции, а не на длине вектора: сюда приходит и
+    // отклонение стика от нуля до единицы, и скорость в сотнях единиц.
+    // У почти перпендикулярного движения знак определяется шумом, и без
+    // порога корпус мигал бы туда-сюда.
+    if (Math.abs(projection) > 0.25) this.facing = projection >= 0 ? 1 : -1;
+  }
+
+  private updateVisualAngle(deltaSeconds: number): void {
+    const targetAngle = Math.atan2(this.orientationUp.x, -this.orientationUp.y);
     const smoothTime = this.attached ? 0.06 : 0.16;
     const delta = wrapAngle(targetAngle - this.visualAngle);
     this.visualAngle = damp(this.visualAngle, this.visualAngle + delta, smoothTime, deltaSeconds);

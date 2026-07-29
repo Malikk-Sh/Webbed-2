@@ -234,6 +234,11 @@ export class SpiderVisual {
     speed: number,
   ): void {
     const attached = this.controller.attached;
+    if (!attached) {
+      this.tuckLegs(deltaSeconds, toWorld);
+      return;
+    }
+
     const stepDuration = clamp(0.19 - speed / 4200, 0.07, 0.19);
     let steppingCount = 0;
     for (const leg of this.legs) if (leg.stepping) steppingCount++;
@@ -241,31 +246,21 @@ export class SpiderVisual {
     for (const leg of this.legs) {
       const maxReach = (leg.femur + leg.tibia) * 0.94;
 
-      const sway =
-        Math.sin(this.gaitPhase * Math.PI + leg.group * Math.PI) * (attached ? 3.4 : 1.2);
-      let desiredWorld: Vector2;
+      const sway = Math.sin(this.gaitPhase * Math.PI + leg.group * Math.PI) * 3.4;
+      let desiredWorld = toWorld({ x: leg.rest.x + sway, y: leg.rest.y });
 
-      if (attached) {
-        desiredWorld = toWorld({ x: leg.rest.x + sway, y: leg.rest.y });
-        // Реальная опора: стопа садится на ближайшую поверхность, поэтому на
-        // краю платформы нога не висит в воздухе, а цепляется за кромку.
-        const query = this.collision.queryClosest(
-          desiredWorld,
-          30,
-          (surface) => surface.material.spiderWalkable,
-        );
-        if (query) {
-          desiredWorld = {
-            x: query.point.x + query.normal.x * 1.5,
-            y: query.point.y + query.normal.y * 1.5,
-          };
-        }
-      } else {
-        // В воздухе ноги поджимаются к телу и подрагивают.
-        desiredWorld = toWorld({
-          x: leg.rest.x * 0.62,
-          y: leg.rest.y * 0.42 + wobble(this.breath * 2.4 + leg.hip.x, leg.side) * 2.2,
-        });
+      // Реальная опора: стопа садится на ближайшую поверхность, поэтому на
+      // краю платформы нога не висит в воздухе, а цепляется за кромку.
+      const query = this.collision.queryClosest(
+        desiredWorld,
+        30,
+        (surface) => surface.material.spiderWalkable,
+      );
+      if (query) {
+        desiredWorld = {
+          x: query.point.x + query.normal.x * 1.5,
+          y: query.point.y + query.normal.y * 1.5,
+        };
       }
 
       const hip = toWorld(leg.hip);
@@ -286,10 +281,10 @@ export class SpiderVisual {
         // Порог зависит от фазовой группы — ноги переставляются вразнобой,
         // как при чередующейся четвероногой походке. Растянутая нога
         // переставляется вне очереди: иначе на разгоне она безнадёжно отстаёт.
-        const threshold = attached ? (leg.group === 0 ? 14 : 21) : 22;
+        const threshold = leg.group === 0 ? 14 : 21;
         const mustStep = stretched > maxReach * 0.86;
 
-        if (error > threshold && (steppingCount < 4 || mustStep || !attached)) {
+        if (error > threshold && (steppingCount < 4 || mustStep)) {
           leg.stepping = true;
           leg.stepProgress = 0;
           leg.stepFrom.x = leg.foot.x;
@@ -312,7 +307,7 @@ export class SpiderVisual {
         const dy = leg.stepTo.y - leg.stepFrom.y;
         const len = Math.hypot(dx, dy) || 1;
         // Подъём по дуге: нога переносится над поверхностью, а не скользит.
-        const lift = Math.sin(Math.PI * leg.stepProgress) * (attached ? 8 : 3);
+        const lift = Math.sin(Math.PI * leg.stepProgress) * 8;
         leg.foot.x = leg.stepFrom.x + dx * t - (dy / len) * lift;
         leg.foot.y = leg.stepFrom.y + dy * t + (dx / len) * lift;
 
@@ -323,19 +318,58 @@ export class SpiderVisual {
         }
       }
 
-      // Жёсткое ограничение вылета: нога не может быть длиннее суммы своих
-      // звеньев. Без него на разгоне отставшая стопа рисуется через полэкрана.
-      const ox = leg.foot.x - hip.x;
-      const oy = leg.foot.y - hip.y;
-      const distance = Math.hypot(ox, oy);
-      if (distance > maxReach) {
-        const scale = maxReach / distance;
-        leg.foot.x = hip.x + ox * scale;
-        leg.foot.y = hip.y + oy * scale;
+      this.clampReach(leg, hip, maxReach);
+      leg.planted = !leg.stepping;
+    }
+  }
+
+  /**
+   * Поза в полёте: ноги поджимаются к телу и мягко подрагивают.
+   *
+   * Здесь принципиально нет шагового цикла. Раньше в воздухе работал тот же
+   * код, что и на поверхности, только с отключённым лимитом одновременных
+   * шагов — а цель стопы при этом висела на ускоряющемся теле. Каждый кадр
+   * ошибка снова превышала порог, шаг перезапускался с нуля, и все восемь ног
+   * мелко и резко дёргались всё падение. Опоры в воздухе нет, переставлять
+   * ноги не по чему, поэтому поза просто плавно притягивается к поджатой.
+   */
+  private tuckLegs(deltaSeconds: number, toWorld: (local: Vector2) => Vector2): void {
+    // Затухание за время, а не за кадр: при просадке частоты поза догоняет
+    // тело ровно так же, как при полных 60 кадрах.
+    const follow = 1 - Math.exp(-14 * deltaSeconds);
+
+    for (const leg of this.legs) {
+      const curl = wobble(this.breath * 2.4 + leg.hip.x, leg.side) * 2.2;
+      const target = toWorld({ x: leg.rest.x * 0.62, y: leg.rest.y * 0.42 + curl });
+
+      if (!leg.initialised) {
+        leg.foot.x = target.x;
+        leg.foot.y = target.y;
+        leg.initialised = true;
+      } else {
+        leg.foot.x += (target.x - leg.foot.x) * follow;
+        leg.foot.y += (target.y - leg.foot.y) * follow;
       }
 
-      leg.planted = attached && !leg.stepping;
+      leg.stepping = false;
+      leg.stepProgress = 1;
+      leg.planted = false;
+      this.clampReach(leg, toWorld(leg.hip), (leg.femur + leg.tibia) * 0.94);
     }
+  }
+
+  /**
+   * Жёсткое ограничение вылета: нога не может быть длиннее суммы своих
+   * звеньев. Без него на разгоне отставшая стопа рисуется через полэкрана.
+   */
+  private clampReach(leg: Leg, hip: Vector2, maxReach: number): void {
+    const ox = leg.foot.x - hip.x;
+    const oy = leg.foot.y - hip.y;
+    const distance = Math.hypot(ox, oy);
+    if (distance <= maxReach) return;
+    const scale = maxReach / distance;
+    leg.foot.x = hip.x + ox * scale;
+    leg.foot.y = hip.y + oy * scale;
   }
 
   /**
@@ -580,6 +614,11 @@ export class SpiderVisual {
   ): void {
     g.fillStyle(color, 1);
     g.fillEllipseRotated(centre.x, centre.y, rx, ry, angle);
+  }
+
+  /** Положения стоп относительно точки, читается браузерными тестами. */
+  footOffsets(origin: Vector2): { x: number; y: number }[] {
+    return this.legs.map((leg) => ({ x: leg.foot.x - origin.x, y: leg.foot.y - origin.y }));
   }
 
   /** Точка выхода нити — кончик брюшка. */

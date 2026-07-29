@@ -862,6 +862,53 @@ export class PrototypeScene {
     this.cameraController.snapTo(position);
   }
 
+  /** Ставит героя на поверхность с заданной нормалью. */
+  testPlace(position: Vector2, normal: Vector2): void {
+    this.spider.teleport(position, normal);
+    this.stateMachine.request('SurfaceIdle', { force: true });
+    this.cameraController.snapTo(position);
+  }
+
+  /** Роняет героя с заданной точки — проверка позы в полёте. */
+  testDrop(position: Vector2): void {
+    this.spider.teleport(position, { x: 0, y: -1 });
+    this.spider.detachFromSurface(400);
+    this.cameraController.snapTo(position);
+  }
+
+  get orientationForTest(): { angle: number; facing: number } {
+    return { angle: this.spider.visualAngle, facing: this.spider.facing };
+  }
+
+  get aimForTest(): {
+    moveX: number;
+    aimX: number;
+    aimY: number;
+    strength: number;
+    aiming: boolean;
+    previewValid: boolean;
+    previewTarget: { x: number; y: number } | null;
+  } {
+    const frame = this.inputSystem.frame;
+    const preview = this.webController.preview;
+    return {
+      moveX: +frame.moveX.toFixed(2),
+      aimX: +frame.aimX.toFixed(2),
+      aimY: +frame.aimY.toFixed(2),
+      strength: +frame.aimStrength.toFixed(2),
+      aiming: this.webController.isAiming,
+      previewValid: preview.valid,
+      previewTarget: preview.target
+        ? { x: Math.round(preview.target.x), y: Math.round(preview.target.y) }
+        : null,
+    };
+  }
+
+  /** Положения стоп относительно тела — по ним измеряется дрожание позы. */
+  get legOffsetsForTest(): { x: number; y: number }[] {
+    return this.spiderVisual.footOffsets(this.spider.position);
+  }
+
   /** Ставит героя в воздух и цепляет нить к якорю — проверка раскачивания. */
   testTether(anchorId: string, from: Vector2, velocity: Vector2): boolean {
     const anchor = this.level.anchors.find((a) => a.id === anchorId);

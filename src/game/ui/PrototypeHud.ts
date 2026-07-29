@@ -1,4 +1,4 @@
-import { inputConfig } from '../../app/GameConfig';
+import { aimConfig, inputConfig } from '../../app/GameConfig';
 import { PALETTE, mixColor } from '../../app/Palette';
 import { clamp01, damp, easeOutBack, easeOutCubic } from '../../core/math/Interpolation';
 import { events } from '../../core/events/EventBus';
@@ -384,20 +384,7 @@ export class PrototypeHud {
 
       this.drawGlyph(painter, label, button.x, button.y, radius, color, alpha);
 
-      // Кольцо прогресса удержания паутины — переход в режим прицеливания.
-      if (button.id === 'web' && this.inputSystem!.touch.buttons.web.down) {
-        const progress = clamp01(this.inputSystem!.touch.buttons.web.holdMs / 140);
-        painter.lineStyle(3 * dp, PALETTE.uiWarn, 0.9 * alpha);
-        painter.beginPath();
-        painter.arc(
-          button.x,
-          button.y,
-          radius + 5 * dp,
-          -Math.PI / 2,
-          -Math.PI / 2 + progress * Math.PI * 2,
-        );
-        painter.strokePath();
-      }
+      if (button.id === 'web') this.drawAimDrag(painter, button, radius, alpha);
     }
 
     // Подпись действия у кнопки паутины меняется по состоянию.
@@ -416,6 +403,74 @@ export class PrototypeHud {
     painter.setTextAlign('center', 'middle');
     painter.fillStyle(0x9fb8c4, 0.8 * this.uiOpacity);
     painter.fillText(caption, web.x, web.y + web.radius + 15 * dp);
+  }
+
+  /**
+   * Протяжка прицела на кнопке паутины.
+   *
+   * Приём неочевиден по одному виду кнопки, поэтому он показан явно: пока
+   * идёт удержание — растущее кольцо, как только палец потянули — стрелка в
+   * выбранную сторону и «поводок» до пальца. Без этого игрок не догадается,
+   * что кнопку можно тянуть.
+   */
+  private drawAimDrag(
+    painter: Painter,
+    button: TouchButtonLayout,
+    radius: number,
+    alpha: number,
+  ): void {
+    const touch = this.inputSystem!.touch;
+    if (!touch.buttons.web.down) return;
+    const dp = this.dp;
+    const aim = touch.aimStick;
+
+    if (aim.magnitude <= 0) {
+      // Кольцо прогресса удержания — второй способ войти в прицеливание.
+      const progress = clamp01(touch.buttons.web.holdMs / aimConfig.holdThresholdMs);
+      painter.lineStyle(3 * dp, PALETTE.uiWarn, 0.9 * alpha);
+      painter.beginPath();
+      painter.arc(
+        button.x,
+        button.y,
+        radius + 5 * dp,
+        -Math.PI / 2,
+        -Math.PI / 2 + progress * Math.PI * 2,
+      );
+      painter.strokePath();
+      return;
+    }
+
+    const reach = inputConfig.aimStickReach * dp;
+    const pull = radius + 6 * dp + aim.magnitude * reach * 0.45;
+    const tipX = button.x + aim.directionX * pull;
+    const tipY = button.y + aim.directionY * pull;
+
+    // Поводок от кнопки к пальцу.
+    painter.lineStyle(3 * dp, PALETTE.uiWarn, (0.35 + aim.magnitude * 0.45) * alpha);
+    painter.beginPath();
+    painter.moveTo(button.x + aim.directionX * radius, button.y + aim.directionY * radius);
+    painter.lineTo(tipX, tipY);
+    painter.strokePath();
+
+    // Наконечник стрелки: направление читается даже боковым зрением.
+    const wing = 8 * dp;
+    const nx = -aim.directionY;
+    const ny = aim.directionX;
+    painter.fillStyle(PALETTE.uiWarn, (0.55 + aim.magnitude * 0.4) * alpha);
+    painter.beginPath();
+    painter.moveTo(tipX + aim.directionX * wing, tipY + aim.directionY * wing);
+    painter.lineTo(tipX - aim.directionX * wing * 0.4 + nx * wing * 0.7, tipY - aim.directionY * wing * 0.4 + ny * wing * 0.7);
+    painter.lineTo(tipX - aim.directionX * wing * 0.4 - nx * wing * 0.7, tipY - aim.directionY * wing * 0.4 - ny * wing * 0.7);
+    painter.closePath();
+    painter.fillPath();
+
+    // Дуга уверенности вокруг кнопки.
+    painter.lineStyle(2.6 * dp, PALETTE.uiWarn, 0.7 * alpha * aim.magnitude);
+    const angle = Math.atan2(aim.directionY, aim.directionX);
+    const spread = 0.55;
+    painter.beginPath();
+    painter.arc(button.x, button.y, radius + 5 * dp, angle - spread, angle + spread);
+    painter.strokePath();
   }
 
   private drawGlyph(
