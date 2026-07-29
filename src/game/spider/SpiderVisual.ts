@@ -1,8 +1,9 @@
-import Phaser from 'phaser';
 import { PALETTE, mixColor, shade } from '../../app/Palette';
 import { surfaceAttachmentConfig } from '../../app/GameConfig';
 import { clamp, clamp01, damp, easeOutCubic, wobble } from '../../core/math/Interpolation';
 import type { Vector2 } from '../../core/math/Vector2';
+import type { Painter } from '../../engine/Painter';
+import { textures } from '../../engine/TextureStore';
 import type { CollisionWorld } from '../physics/CollisionWorld';
 import { TEXTURES } from '../render/TextureFactory';
 import type { SpiderController } from './SpiderController';
@@ -31,6 +32,9 @@ interface Leg {
 
 const LEGS_PER_SIDE = 4;
 
+/** Насколько далеко вниз ищется поверхность для тени в полёте. */
+const SHADOW_CAST_RANGE = 520;
+
 /**
  * Процедурная отрисовка Люмы.
  *
@@ -45,10 +49,6 @@ const LEGS_PER_SIDE = 4;
  */
 export class SpiderVisual {
   private readonly legs: Leg[] = [];
-  private readonly graphics: Phaser.GameObjects.Graphics;
-  private readonly glow: Phaser.GameObjects.Image;
-  private readonly eyeGlow: Phaser.GameObjects.Image;
-  private readonly shadow: Phaser.GameObjects.Image;
 
   private gaitPhase = 0;
   private breath = 0;
@@ -60,40 +60,15 @@ export class SpiderVisual {
   private mood: SpiderMood = 'calm';
   private moodEnergy = 0;
   private legDetail = 8;
+  /** Была ли героиня на поверхности в прошлом кадре — ловит момент касания. */
+  private wasAttached = false;
   /** Плавный разворот корпуса влево-вправо: −1 … +1. */
   private facingBlend = 1;
 
   constructor(
-    scene: Phaser.Scene,
     private readonly controller: SpiderController,
     private readonly collision: CollisionWorld,
-    depth: number,
   ) {
-    this.shadow = scene.add
-      .image(0, 0, TEXTURES.glowSoft)
-      .setDepth(depth - 2)
-      .setBlendMode(Phaser.BlendModes.MULTIPLY)
-      .setTint(0x141d26)
-      .setAlpha(0.5);
-
-    this.glow = scene.add
-      .image(0, 0, TEXTURES.glowSoft)
-      .setDepth(depth - 1)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(PALETTE.spiderEyeGlow)
-      .setAlpha(0.12)
-      .setScale(0.5);
-
-    this.graphics = scene.add.graphics().setDepth(depth);
-
-    this.eyeGlow = scene.add
-      .image(0, 0, TEXTURES.glow)
-      .setDepth(depth + 1)
-      .setBlendMode(Phaser.BlendModes.ADD)
-      .setTint(PALETTE.spiderEye)
-      .setAlpha(0.45)
-      .setScale(0.22);
-
     const surfaceY = surfaceAttachmentConfig.targetDistance + 1;
     for (const side of [-1, 1] as const) {
       for (let i = 0; i < LEGS_PER_SIDE; i++) {
@@ -144,14 +119,7 @@ export class SpiderVisual {
     }
   }
 
-  destroy(): void {
-    this.graphics.destroy();
-    this.glow.destroy();
-    this.eyeGlow.destroy();
-    this.shadow.destroy();
-  }
-
-  update(deltaSeconds: number, time: number): void {
+  update(deltaSeconds: number): void {
     const controller = this.controller;
     const position = controller.position;
     const angle = controller.visualAngle;
@@ -191,7 +159,103 @@ export class SpiderVisual {
     };
 
     this.updateLegs(deltaSeconds, toWorld, speed);
-    this.draw(position, angle, cos, sin, flip, toWorld, time);
+  }
+
+  /**
+   * Отрисовка. Порядок повторяет прежнюю раскладку по глубине: тень под
+   * телом на умножении, мягкий ореол на сложении, само тело, свечение глаз.
+   */
+  draw(painter: Painter, time: number): void {
+    const controller = this.controller;
+    const position = controller.position;
+    const angle = controller.visualAngle;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const flip = this.facingBlend;
+    const toWorld = (local: Vector2): Vector2 => {
+      const lx = local.x * flip;
+      const ly = local.y;
+      return {
+        x: position.x + lx * cos - ly * sin,
+        y: position.y + lx * sin + ly * cos,
+      };
+    };
+
+    const soft = textures.get(TEXTURES.glowSoft);
+
+    // Тень ложится на саму поверхность и вытянута вдоль неё.
+    const contact = controller.contact;
+    if (contact && controller.attached) {
+      const shadow = textures.tint(TEXTURES.glowSoft, 0x141d26);
+      painter.setBlendMode('multiply');
+      painter.drawTexture(
+        shadow.canvas,
+        contact.point.x,
+        contact.point.y,
+        shadow.width * 0.28,
+        shadow.height * 0.12,
+        angle,
+        0.45,
+      );
+    } else {
+      // В воздухе тень падает вниз на первую же поверхность под героиней.
+      // Без неё в полёте и на дуге маятника нечем измерить высоту: силуэт
+      // висит в пустоте, и до земли на глаз может быть и сто единиц, и
+      // тысяча.
+      const drop = this.collision.raycast(position, {
+        x: position.x,
+        y: position.y + SHADOW_CAST_RANGE,
+      });
+      if (drop) {
+        const fall = Math.max(0, drop.point.y - position.y);
+        const closeness = 1 - fall / SHADOW_CAST_RANGE;
+        const shadow = textures.tint(TEXTURES.glowSoft, 0x141d26);
+        painter.setBlendMode('multiply');
+        painter.drawTexture(
+          shadow.canvas,
+          drop.point.x,
+          drop.point.y,
+          shadow.width * (0.2 + (1 - closeness) * 0.22),
+          shadow.height * (0.09 + (1 - closeness) * 0.05),
+          0,
+          // Затухание линейное, а не квадратичное: на тёмном полу тень в
+          // режиме умножения и без того еле различима, и квадрат гасил её
+          // задолго до того, как она переставала быть нужной.
+          0.5 * closeness,
+        );
+      }
+    }
+
+    const halo = textures.tint(TEXTURES.glowSoft, PALETTE.spiderEyeGlow);
+    painter.setBlendMode('add');
+    painter.drawTexture(
+      halo.canvas,
+      position.x,
+      position.y,
+      soft.width * 0.5,
+      soft.height * 0.5,
+      0,
+      0.1 + this.spinneretGlow * 0.2,
+    );
+    painter.setBlendMode('normal');
+
+    const eyeCentre = this.drawBody(painter, position, angle, cos, sin, flip, toWorld);
+
+    const eye = textures.tint(TEXTURES.glow, PALETTE.spiderEye);
+    const openness = clamp01(1 - this.blink) * (1 - this.moodEnergy * 0.3);
+    const pulse = 0.4 + Math.sin(time / 620) * 0.05 + this.spinneretGlow * 0.2;
+    const eyeSize = eye.width * (0.24 + this.moodEnergy * 0.05);
+    painter.setBlendMode('add');
+    painter.drawTexture(
+      eye.canvas,
+      eyeCentre.x,
+      eyeCentre.y,
+      eyeSize,
+      eyeSize,
+      0,
+      Math.max(0, pulse * openness),
+    );
+    painter.setBlendMode('normal');
   }
 
   // ------------------------------------------------------------------- ноги
@@ -202,38 +266,52 @@ export class SpiderVisual {
     speed: number,
   ): void {
     const attached = this.controller.attached;
+    if (!attached) {
+      this.wasAttached = false;
+      this.tuckLegs(deltaSeconds, toWorld);
+      return;
+    }
+
+    // Касание после полёта: лапы поджаты у тела, а опора уже под ними. Без
+    // отдельной обработки четыре ноги уходят в шаг, а остальные просто
+    // подтягиваются по прямой — получается рывок, который и видно при
+    // приземлении с прыжка. Здесь все восемь начинают шаг разом, но двумя
+    // группами со сдвигом: лапы ставятся по дуге и вразнобой, как при
+    // настоящем приземлении.
+    if (!this.wasAttached) {
+      for (const leg of this.legs) {
+        if (!leg.initialised) continue;
+        leg.stepping = true;
+        leg.stepProgress = leg.group === 0 ? 0 : -0.45;
+        leg.stepFrom.x = leg.foot.x;
+        leg.stepFrom.y = leg.foot.y;
+      }
+    }
+    this.wasAttached = true;
+
     const stepDuration = clamp(0.19 - speed / 4200, 0.07, 0.19);
     let steppingCount = 0;
     for (const leg of this.legs) if (leg.stepping) steppingCount++;
 
+
     for (const leg of this.legs) {
       const maxReach = (leg.femur + leg.tibia) * 0.94;
 
-      const sway =
-        Math.sin(this.gaitPhase * Math.PI + leg.group * Math.PI) * (attached ? 3.4 : 1.2);
-      let desiredWorld: Vector2;
+      const sway = Math.sin(this.gaitPhase * Math.PI + leg.group * Math.PI) * 3.4;
+      let desiredWorld = toWorld({ x: leg.rest.x + sway, y: leg.rest.y });
 
-      if (attached) {
-        desiredWorld = toWorld({ x: leg.rest.x + sway, y: leg.rest.y });
-        // Реальная опора: стопа садится на ближайшую поверхность, поэтому на
-        // краю платформы нога не висит в воздухе, а цепляется за кромку.
-        const query = this.collision.queryClosest(
-          desiredWorld,
-          30,
-          (surface) => surface.material.spiderWalkable,
-        );
-        if (query) {
-          desiredWorld = {
-            x: query.point.x + query.normal.x * 1.5,
-            y: query.point.y + query.normal.y * 1.5,
-          };
-        }
-      } else {
-        // В воздухе ноги поджимаются к телу и подрагивают.
-        desiredWorld = toWorld({
-          x: leg.rest.x * 0.62,
-          y: leg.rest.y * 0.42 + wobble(this.breath * 2.4 + leg.hip.x, leg.side) * 2.2,
-        });
+      // Реальная опора: стопа садится на ближайшую поверхность, поэтому на
+      // краю платформы нога не висит в воздухе, а цепляется за кромку.
+      const query = this.collision.queryClosest(
+        desiredWorld,
+        30,
+        (surface) => surface.material.spiderWalkable,
+      );
+      if (query) {
+        desiredWorld = {
+          x: query.point.x + query.normal.x * 1.5,
+          y: query.point.y + query.normal.y * 1.5,
+        };
       }
 
       const hip = toWorld(leg.hip);
@@ -254,17 +332,19 @@ export class SpiderVisual {
         // Порог зависит от фазовой группы — ноги переставляются вразнобой,
         // как при чередующейся четвероногой походке. Растянутая нога
         // переставляется вне очереди: иначе на разгоне она безнадёжно отстаёт.
-        const threshold = attached ? (leg.group === 0 ? 14 : 21) : 22;
+        const threshold = leg.group === 0 ? 14 : 21;
         const mustStep = stretched > maxReach * 0.86;
 
-        if (error > threshold && (steppingCount < 4 || mustStep || !attached)) {
+        if (error > threshold && (steppingCount < 4 || mustStep)) {
           leg.stepping = true;
           leg.stepProgress = 0;
           leg.stepFrom.x = leg.foot.x;
           leg.stepFrom.y = leg.foot.y;
           steppingCount++;
         } else if (error > 0.5) {
-          const follow = Math.min(1, deltaSeconds * 14);
+          // Затухание за время, а не за кадр: при просадке частоты стопа
+          // догоняет цель ровно так же, как при полных 60 кадрах.
+          const follow = 1 - Math.exp(-14 * deltaSeconds);
           leg.foot.x += dx * follow;
           leg.foot.y += dy * follow;
         }
@@ -275,35 +355,80 @@ export class SpiderVisual {
         leg.stepTo.x = desiredWorld.x;
         leg.stepTo.y = desiredWorld.y;
 
-        const t = easeOutCubic(leg.stepProgress);
-        const dx = leg.stepTo.x - leg.stepFrom.x;
-        const dy = leg.stepTo.y - leg.stepFrom.y;
-        const len = Math.hypot(dx, dy) || 1;
-        // Подъём по дуге: нога переносится над поверхностью, а не скользит.
-        const lift = Math.sin(Math.PI * leg.stepProgress) * (attached ? 8 : 3);
-        leg.foot.x = leg.stepFrom.x + dx * t - (dy / len) * lift;
-        leg.foot.y = leg.stepFrom.y + dy * t + (dx / len) * lift;
+        // Отрицательный прогресс — пауза перед переносом: так вторая группа
+        // ног при приземлении трогается позже первой. Выходить отсюда по
+        // `continue` нельзя: ниже стоит ограничение вылета, и без него
+        // отставшая стопа рисуется через полэкрана.
+        if (leg.stepProgress >= 0) {
+          const t = easeOutCubic(leg.stepProgress);
+          const dx = leg.stepTo.x - leg.stepFrom.x;
+          const dy = leg.stepTo.y - leg.stepFrom.y;
+          const len = Math.hypot(dx, dy) || 1;
+          // Подъём по дуге: нога переносится над поверхностью, а не скользит.
+          const lift = Math.sin(Math.PI * leg.stepProgress) * 8;
+          leg.foot.x = leg.stepFrom.x + dx * t - (dy / len) * lift;
+          leg.foot.y = leg.stepFrom.y + dy * t + (dx / len) * lift;
 
-        if (leg.stepProgress >= 1) {
-          leg.stepping = false;
-          leg.foot.x = leg.stepTo.x;
-          leg.foot.y = leg.stepTo.y;
+          if (leg.stepProgress >= 1) {
+            leg.stepping = false;
+            leg.foot.x = leg.stepTo.x;
+            leg.foot.y = leg.stepTo.y;
+          }
         }
       }
 
-      // Жёсткое ограничение вылета: нога не может быть длиннее суммы своих
-      // звеньев. Без него на разгоне отставшая стопа рисуется через полэкрана.
-      const ox = leg.foot.x - hip.x;
-      const oy = leg.foot.y - hip.y;
-      const distance = Math.hypot(ox, oy);
-      if (distance > maxReach) {
-        const scale = maxReach / distance;
-        leg.foot.x = hip.x + ox * scale;
-        leg.foot.y = hip.y + oy * scale;
+      this.clampReach(leg, hip, maxReach);
+      leg.planted = !leg.stepping;
+    }
+  }
+
+  /**
+   * Поза в полёте: ноги поджимаются к телу и мягко подрагивают.
+   *
+   * Здесь принципиально нет шагового цикла. Раньше в воздухе работал тот же
+   * код, что и на поверхности, только с отключённым лимитом одновременных
+   * шагов — а цель стопы при этом висела на ускоряющемся теле. Каждый кадр
+   * ошибка снова превышала порог, шаг перезапускался с нуля, и все восемь ног
+   * мелко и резко дёргались всё падение. Опоры в воздухе нет, переставлять
+   * ноги не по чему, поэтому поза просто плавно притягивается к поджатой.
+   */
+  private tuckLegs(deltaSeconds: number, toWorld: (local: Vector2) => Vector2): void {
+    // Затухание за время, а не за кадр: при просадке частоты поза догоняет
+    // тело ровно так же, как при полных 60 кадрах.
+    const follow = 1 - Math.exp(-14 * deltaSeconds);
+
+    for (const leg of this.legs) {
+      const curl = wobble(this.breath * 2.4 + leg.hip.x, leg.side) * 2.2;
+      const target = toWorld({ x: leg.rest.x * 0.62, y: leg.rest.y * 0.42 + curl });
+
+      if (!leg.initialised) {
+        leg.foot.x = target.x;
+        leg.foot.y = target.y;
+        leg.initialised = true;
+      } else {
+        leg.foot.x += (target.x - leg.foot.x) * follow;
+        leg.foot.y += (target.y - leg.foot.y) * follow;
       }
 
-      leg.planted = attached && !leg.stepping;
+      leg.stepping = false;
+      leg.stepProgress = 1;
+      leg.planted = false;
+      this.clampReach(leg, toWorld(leg.hip), (leg.femur + leg.tibia) * 0.94);
     }
+  }
+
+  /**
+   * Жёсткое ограничение вылета: нога не может быть длиннее суммы своих
+   * звеньев. Без него на разгоне отставшая стопа рисуется через полэкрана.
+   */
+  private clampReach(leg: Leg, hip: Vector2, maxReach: number): void {
+    const ox = leg.foot.x - hip.x;
+    const oy = leg.foot.y - hip.y;
+    const distance = Math.hypot(ox, oy);
+    if (distance <= maxReach) return;
+    const scale = maxReach / distance;
+    leg.foot.x = hip.x + ox * scale;
+    leg.foot.y = hip.y + oy * scale;
   }
 
   /**
@@ -338,18 +463,16 @@ export class SpiderVisual {
 
   // --------------------------------------------------------------- рисование
 
-  private draw(
+  /** Возвращает мировую точку, вокруг которой светятся глаза. */
+  private drawBody(
+    g: Painter,
     position: Vector2,
     angle: number,
     cos: number,
     sin: number,
     flip: number,
     toWorld: (local: Vector2) => Vector2,
-    time: number,
-  ): void {
-    const g = this.graphics;
-    g.clear();
-
+  ): Vector2 {
     const squash = this.controller.landingSquash;
     // Приземление сплющивает по нормали и растягивает вдоль поверхности.
     const scaleAlong = 1 + squash * 0.24;
@@ -365,21 +488,6 @@ export class SpiderVisual {
         y: position.y + lx * sin + ly * cos,
       };
     };
-
-    // --- тень ----------------------------------------------------------
-    const contact = this.controller.contact;
-    if (contact && this.controller.attached) {
-      this.shadow.setVisible(true);
-      this.shadow.setPosition(contact.point.x, contact.point.y);
-      this.shadow.setScale(0.28, 0.12);
-      this.shadow.setRotation(angle);
-      this.shadow.setAlpha(0.45);
-    } else {
-      this.shadow.setVisible(false);
-    }
-
-    this.glow.setPosition(position.x, position.y);
-    this.glow.setAlpha(0.1 + this.spinneretGlow * 0.2);
 
     // --- дальние ноги ---------------------------------------------------
     for (const leg of this.legs) {
@@ -436,16 +544,18 @@ export class SpiderVisual {
       g.strokePath();
     }
 
-    this.drawEyes(g, body, cos, sin, flip, time);
+    const eyeCentre = this.drawEyes(g, body, cos, sin, flip);
 
     if (this.spinneretGlow > 0.01) {
       g.fillStyle(PALETTE.silkGlow, this.spinneretGlow * 0.9);
       g.fillCircle(spinneret.x, spinneret.y, 2 + this.spinneretGlow * 2.8);
     }
+
+    return eyeCentre;
   }
 
   private drawLeg(
-    g: Phaser.GameObjects.Graphics,
+    g: Painter,
     leg: Leg,
     toWorld: (local: Vector2) => Vector2,
     depthFactor: number,
@@ -498,13 +608,12 @@ export class SpiderVisual {
   }
 
   private drawEyes(
-    g: Phaser.GameObjects.Graphics,
+    g: Painter,
     body: (x: number, y: number) => Vector2,
     cos: number,
     sin: number,
     flip: number,
-    time: number,
-  ): void {
+  ): Vector2 {
     // Взгляд переводится в локальные координаты, чтобы глаза следили за
     // целью, а не за экраном, на любой поверхности.
     const facingSign = flip >= 0 ? 1 : -1;
@@ -551,39 +660,24 @@ export class SpiderVisual {
       }
     }
 
-    const centre = body(9.8, -2.6);
-    this.eyeGlow.setPosition(centre.x, centre.y);
-    const pulse = 0.4 + Math.sin(time / 620) * 0.05 + this.spinneretGlow * 0.2;
-    this.eyeGlow.setAlpha(pulse * openness);
-    this.eyeGlow.setScale(0.24 + fear * 0.05);
+    return body(9.8, -2.6);
   }
 
   private fillEllipse(
-    g: Phaser.GameObjects.Graphics,
+    g: Painter,
     centre: Vector2,
     rx: number,
     ry: number,
     angle: number,
     color: number,
   ): void {
-    // Phaser рисует эллипсы только по осям, поэтому повёрнутый строится
-    // многоугольником — шестнадцати сегментов хватает на любом масштабе.
-    const steps = 16;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
     g.fillStyle(color, 1);
-    g.beginPath();
-    for (let i = 0; i <= steps; i++) {
-      const t = (i / steps) * Math.PI * 2;
-      const lx = Math.cos(t) * rx;
-      const ly = Math.sin(t) * ry;
-      const x = centre.x + lx * cos - ly * sin;
-      const y = centre.y + lx * sin + ly * cos;
-      if (i === 0) g.moveTo(x, y);
-      else g.lineTo(x, y);
-    }
-    g.closePath();
-    g.fillPath();
+    g.fillEllipseRotated(centre.x, centre.y, rx, ry, angle);
+  }
+
+  /** Положения стоп относительно точки, читается браузерными тестами. */
+  footOffsets(origin: Vector2): { x: number; y: number }[] {
+    return this.legs.map((leg) => ({ x: leg.foot.x - origin.x, y: leg.foot.y - origin.y }));
   }
 
   /** Точка выхода нити — кончик брюшка. */

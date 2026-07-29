@@ -18,7 +18,7 @@ import {
 import type { InputFrame } from '../input/InputFrame';
 import type { AnchorPoint } from '../level/PrototypeLevelLoader';
 import type { CollisionWorld } from '../physics/CollisionWorld';
-import { worldToBody } from '../physics/MatterUnits';
+import type { RigidBody } from '../../engine/physics/RigidBody';
 import type { WebSystem } from '../web/WebSystem';
 import type { WebAttachmentTarget } from '../web/WebTypes';
 import type { SpiderController } from './SpiderController';
@@ -58,7 +58,7 @@ export interface WebControllerDeps {
   collision: CollisionWorld;
   anchors: AnchorPoint[];
   /** Динамические тела, к которым разрешено крепить нить. */
-  getAttachableBodies: () => MatterJS.BodyType[];
+  getAttachableBodies: () => RigidBody[];
   aimAssistStrength: () => number;
   slowMotionEnabled: () => boolean;
 }
@@ -86,6 +86,8 @@ export class SpiderWebController {
 
   /** Текущая длина активной нити (изменяется подтягиванием). */
   tetherLength = 0;
+  /** Во сколько раз укоротилась нить за последний шаг — для раскрутки. */
+  private reelRatio = 1;
   /** Точка крепления активной нити. */
   anchorPosition: Vector2 | null = null;
   /** Прогресс «вылета» нити, 0..1 — визуальный эффект выстрела. */
@@ -136,7 +138,11 @@ export class SpiderWebController {
 
     if (input.webHeld) {
       this.aimHoldMs += deltaMs;
-      if (!this.aiming && this.aimHoldMs >= aimConfig.holdThresholdMs) {
+      // Прицеливание включает либо удержание, либо протяжка. Второе важнее:
+      // игрок, потянувший палец в сторону, уже выбрал направление, и ждать
+      // порога удержания ему незачем.
+      const dragged = input.aimStrength >= aimConfig.dragThreshold;
+      if (!this.aiming && (dragged || this.aimHoldMs >= aimConfig.holdThresholdMs)) {
         this.aiming = true;
         events.emit('aim:started', {});
       }
@@ -196,8 +202,10 @@ export class SpiderWebController {
   }
 
   private handleReeling(deltaSeconds: number, input: InputFrame): void {
+    this.reelRatio = 1;
     if (!this.deps.spider.canControl) return;
     const vertical = input.moveY;
+    const before = this.tetherLength;
     if (vertical < -0.25) {
       // Стик вверх — подтягивание: нить укорачивается.
       this.tetherLength = Math.max(
@@ -210,6 +218,9 @@ export class SpiderWebController {
         this.tetherLength + tetherConfig.reelOutSpeed * vertical * deltaSeconds,
       );
     }
+    // Отношение радиусов запоминается для раскрутки: сокращая нить, героиня
+    // разгоняется по дуге, как фигуристка, прижавшая руки.
+    if (this.tetherLength > 1e-3) this.reelRatio = before / this.tetherLength;
   }
 
   /**
@@ -232,15 +243,31 @@ export class SpiderWebController {
 
     // Помощь раскачиванию: небольшое ускорение вдоль дуги, когда игрок
     // отклоняет стик по ходу движения (раздел 24.3 ТЗ).
+    const tangent = { x: -ny, y: nx };
+    const tangentialSpeed = dot(spider.velocity, tangent);
+
     if (spider.canControl && Math.abs(input.moveX) > 0.1) {
-      const tangent = { x: -ny, y: nx };
       const along = dot(tangent, { x: input.moveX, y: 0 });
-      const tangentialSpeed = dot(spider.velocity, tangent);
       if (Math.abs(tangentialSpeed) < 620) {
-        const assist = tetherConfig.swingAssistAcceleration * along * deltaSeconds;
+        // Попадание в такт вознаграждается: стик по ходу движения качает
+        // сильнее, чем стик против него. Так раскачка становится ритмом, а не
+        // удержанием кнопки.
+        const inRhythm = along * tangentialSpeed > 0 ? tetherConfig.swingPumpBonus : 0;
+        const assist =
+          tetherConfig.swingAssistAcceleration * (1 + inRhythm) * along * deltaSeconds;
         spider.velocity.x += tangent.x * assist;
         spider.velocity.y += tangent.y * assist;
       }
+    }
+
+    // Раскрутка от подтягивания: сохранение момента импульса даёт прирост
+    // касательной скорости при укорочении радиуса.
+    if (this.reelRatio > 1.0001) {
+      const gain = Math.pow(this.reelRatio, tetherConfig.reelSpinExponent);
+      const target = clamp(tangentialSpeed * gain, -tetherConfig.reelSpinMaxSpeed, tetherConfig.reelSpinMaxSpeed);
+      const delta = target - tangentialSpeed;
+      spider.velocity.x += tangent.x * delta;
+      spider.velocity.y += tangent.y * delta;
     }
 
     if (currentLength <= this.tetherLength) return;
@@ -425,6 +452,21 @@ export class SpiderWebController {
     });
   }
 
+  /** Прицепление к точке уровня напрямую — используется браузерными тестами. */
+  testAttachToAnchor(anchor: { id: string; position: Vector2 }): boolean {
+    this.detachCooldownMs = 0;
+    this.attachTo({
+      point: { ...anchor.position },
+      kind: 'anchor',
+      assisted: false,
+      anchorId: anchor.id,
+      bodyId: null,
+      distance: 0,
+      score: 1,
+    });
+    return this.isTethered;
+  }
+
   /**
    * Ключевой момент управления: если Люма уже висит на нити и стоит на
    * поверхности, повторное нажатие закрепляет свободный конец здесь —
@@ -476,7 +518,7 @@ export class SpiderWebController {
       return {
         type: 'body',
         bodyId: body.id,
-        localOffset: worldToBody(body, candidate.point),
+        localOffset: body.toLocal(candidate.point),
       };
     }
     return {
@@ -544,13 +586,15 @@ export class SpiderWebController {
     if (boost) {
       const velocity = this.deps.spider.velocity;
       const speed = length(velocity);
-      if (speed > 1) {
-        const direction = normalize(velocity);
-        this.deps.spider.addVelocity({
-          x: direction.x * tetherConfig.releaseBoost,
-          y: direction.y * tetherConfig.releaseBoost - 40,
-        });
-      }
+      // Надбавка вдоль движения — доля набранной скорости, подъём — величина
+      // постоянная. На медленной дуге получается обычный прыжок, на быстрой —
+      // бросок, сохраняющий всю инерцию раскачки.
+      const gain = Math.min(speed * tetherConfig.releaseGain, tetherConfig.releaseGainMax);
+      const direction = speed > 1 ? normalize(velocity) : { x: 0, y: 0 };
+      this.deps.spider.addVelocity({
+        x: direction.x * gain,
+        y: direction.y * gain - tetherConfig.releaseLift,
+      });
     }
 
     this.deps.web.removeStrand(strandId, 'cleanup');

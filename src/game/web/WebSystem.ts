@@ -4,12 +4,6 @@ import { clamp } from '../../core/math/Interpolation';
 import { distance, type Vector2 } from '../../core/math/Vector2';
 import { closestPointOnSegment } from '../../core/math/Geometry';
 import type { CollisionWorld } from '../physics/CollisionWorld';
-import {
-  bodyToWorld,
-  forceToMatter,
-  pointVelocity,
-  type MatterBodyLike,
-} from '../physics/MatterUnits';
 import { WebGraph } from './WebGraph';
 import { WebSolver } from './WebSolver';
 import type {
@@ -29,8 +23,19 @@ export interface SeveredRibbon {
   lifetimeMs: number;
 }
 
+/**
+ * Минимум, который паутине нужен от твёрдого тела. Интерфейс намеренно уже
+ * реального `RigidBody`: тесты подставляют сюда простую заглушку.
+ */
+export interface WebAttachableBody {
+  readonly position: Vector2;
+  readonly mass: number;
+  toWorld(local: Vector2): Vector2;
+  velocityAt(world: Vector2): Vector2;
+}
+
 export interface WebBodyProvider {
-  getBody(bodyId: number): MatterBodyLike | null;
+  getBody(bodyId: number): WebAttachableBody | null;
   applyForce(bodyId: number, worldPoint: Vector2, force: Vector2): void;
 }
 
@@ -39,7 +44,7 @@ export interface SpiderAnchorProvider {
 }
 
 /**
- * Владелец всей паутины комнаты: граф, решатель, крепления к телам Matter,
+ * Владелец всей паутины комнаты: граф, решатель, крепления к твёрдым телам,
  * лимиты, разрывы и сериализация.
  */
 export class WebSystem {
@@ -159,6 +164,7 @@ export class WebSystem {
       active: true,
       playerCreated: request.playerCreated,
       scripted: request.scripted ?? false,
+      cuttable: request.cuttable ?? request.playerCreated,
       pulsePosition: 0,
       pulseEnergy: 0,
       ageMs: 0,
@@ -208,7 +214,7 @@ export class WebSystem {
       case 'body': {
         const body = this.bodies.getBody(target.bodyId);
         if (!body) return null;
-        const world = bodyToWorld(body, target.localOffset);
+        const world = body.toWorld(target.localOffset);
         const node = this.graph.createNode('body-anchor', world, true);
         node.bodyId = target.bodyId;
         node.localOffset = { ...target.localOffset };
@@ -246,7 +252,7 @@ export class WebSystem {
     events.emit('web:broken', { strandId, position: midpoint, cause });
   }
 
-  /** Разрезает ближайшую к точке нить игрока. Возвращает её ID. */
+  /** Разрезает ближайшую к точке нить. Возвращает её ID. */
   cutNearestStrand(position: Vector2, radius: number = webConfig.cutRadius): number | null {
     const found = this.findNearestStrand(position, radius, true);
     if (found === null) return null;
@@ -254,13 +260,19 @@ export class WebSystem {
     return found;
   }
 
-  /** Ближайшая нить к точке; `playerOnly` исключает сюжетные нити уровня. */
-  findNearestStrand(position: Vector2, radius: number, playerOnly: boolean): number | null {
+  /**
+   * Ближайшая нить к точке.
+   *
+   * `cuttableOnly` оставляет нити игрока и те сюжетные, которые комната сама
+   * объявила частью задачи: подвес груза резать можно, декоративную растяжку —
+   * нет.
+   */
+  findNearestStrand(position: Vector2, radius: number, cuttableOnly: boolean): number | null {
     let bestId: number | null = null;
     let bestDist = radius;
 
     for (const strand of this.graph.allStrands) {
-      if (playerOnly && !strand.playerCreated) continue;
+      if (cuttableOnly && !strand.cuttable) continue;
       const ids = strand.particleIds;
       for (let i = 0; i < ids.length - 1; i++) {
         const a = this.graph.getParticle(ids[i]!);
@@ -326,7 +338,7 @@ export class WebSystem {
       if (node.type === 'body-anchor' && node.bodyId !== undefined && node.localOffset) {
         const body = this.bodies.getBody(node.bodyId);
         if (body) {
-          const world = bodyToWorld(body, node.localOffset);
+          const world = body.toWorld(node.localOffset);
           node.position.x = world.x;
           node.position.y = world.y;
         }
@@ -362,7 +374,7 @@ export class WebSystem {
   }
 
   /**
-   * Передача нагрузки телам Matter (раздел 20.2 ТЗ).
+   * Передача нагрузки твёрдым телам (раздел 20.2 ТЗ).
    *
    * Нить моделируется как односторонняя пружина с демпфером: она тянет, но
    * никогда не толкает. Суммарная сила на тело ограничивается — без этого
@@ -397,7 +409,7 @@ export class WebSystem {
         if (!body) continue;
 
         const other = node === nodeA ? nodeB : nodeA;
-        const velocity = pointVelocity(body, node.position);
+        const velocity = body.velocityAt(node.position);
         const otherVelX = (other.position.x - other.previousPosition.x) * 60;
         const otherVelY = (other.position.y - other.previousPosition.y) * 60;
 
@@ -456,7 +468,7 @@ export class WebSystem {
         continue;
       }
       const point = { x: entry.px / entry.n, y: entry.py / entry.n };
-      this.bodies.applyForce(bodyId, point, forceToMatter({ x: fx, y: fy }));
+      this.bodies.applyForce(bodyId, point, { x: fx, y: fy });
     }
   }
 
@@ -650,6 +662,7 @@ export class WebSystem {
         restLength: strand.restLength,
         playerCreated: strand.playerCreated,
         scripted: strand.scripted,
+        cuttable: strand.cuttable,
       });
     }
     return { version: 1, nodes, strands };
@@ -679,6 +692,7 @@ export class WebSystem {
         requestedRestLength: saved.restLength,
         playerCreated: saved.playerCreated,
         scripted: saved.scripted,
+        cuttable: saved.cuttable,
       });
     }
   }

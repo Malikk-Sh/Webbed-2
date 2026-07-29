@@ -1,5 +1,5 @@
-import Phaser from 'phaser';
 import { PALETTE } from '../../app/Palette';
+import type { Painter } from '../../engine/Painter';
 import { clamp01 } from '../../core/math/Interpolation';
 import type { Vector2 } from '../../core/math/Vector2';
 
@@ -23,33 +23,21 @@ interface Particle {
 /**
  * Пулированные частицы для игровых эффектов.
  *
- * Свой лёгкий пул вместо эмиттеров Phaser выбран ради двух вещей: игровые
- * частицы имеют приоритет над декоративными и не должны вытесняться ими при
- * достижении лимита, и каждый всплеск нужно уметь описать одной строкой в
- * месте события, а не заранее собранной конфигурацией.
+ * Свой лёгкий пул выбран ради двух вещей: игровые частицы имеют приоритет над
+ * декоративными и не должны вытесняться ими при достижении лимита, и каждый
+ * всплеск нужно уметь описать одной строкой в месте события, а не заранее
+ * собранной конфигурацией.
+ *
+ * Симуляция и отрисовка разделены: первая идёт с шагом кадра, вторая — в тот
+ * момент кадра, когда до слоя частиц доходит очередь.
  */
 export class ParticleField {
   private readonly pool: Particle[] = [];
   private readonly active: Particle[] = [];
-  private readonly normalLayer: Phaser.GameObjects.Graphics;
-  private readonly additiveLayer: Phaser.GameObjects.Graphics;
   private budget = 600;
-
-  constructor(scene: Phaser.Scene, depth: number) {
-    this.normalLayer = scene.add.graphics().setDepth(depth);
-    this.additiveLayer = scene.add
-      .graphics()
-      .setDepth(depth + 1)
-      .setBlendMode(Phaser.BlendModes.ADD);
-  }
 
   setBudget(budget: number): void {
     this.budget = Math.max(40, budget);
-  }
-
-  destroy(): void {
-    this.normalLayer.destroy();
-    this.additiveLayer.destroy();
   }
 
   get count(): number {
@@ -85,6 +73,35 @@ export class ParticleField {
         color: PALETTE.stoneEdge,
         gravity: 700,
         drag: 2.6,
+        additive: false,
+        spin: 0,
+        angle: 0,
+        shape: 'dot',
+      });
+    }
+  }
+
+  /**
+   * Пылинка из-под лапы на ходу.
+   *
+   * Одна-две частицы на шаг, а не всплеск: постоянное движение должно
+   * оставлять след, но не превращаться в дымовую завесу под ногами.
+   */
+  puffStep(position: Vector2, normal: Vector2, speed: number): void {
+    const count = speed > 200 ? 2 : 1;
+    const tangent = { x: -normal.y, y: normal.x };
+    for (let i = 0; i < count; i++) {
+      const side = Math.random() > 0.5 ? 1 : -1;
+      this.spawn({
+        x: position.x + tangent.x * side * (4 + Math.random() * 10) + normal.x * 12,
+        y: position.y + tangent.y * side * (4 + Math.random() * 10) + normal.y * 12,
+        vx: -tangent.x * side * (10 + Math.random() * 40) + normal.x * 30,
+        vy: -tangent.y * side * (10 + Math.random() * 40) + normal.y * 30,
+        maxLife: 0.26 + Math.random() * 0.3,
+        size: 1 + Math.random() * 1.8,
+        color: PALETTE.stoneEdge,
+        gravity: 260,
+        drag: 3.4,
         additive: false,
         spin: 0,
         angle: 0,
@@ -213,11 +230,6 @@ export class ParticleField {
   }
 
   update(deltaSeconds: number): void {
-    const normal = this.normalLayer;
-    const additive = this.additiveLayer;
-    normal.clear();
-    additive.clear();
-
     for (let i = this.active.length - 1; i >= 0; i--) {
       const p = this.active[i]!;
       p.life -= deltaSeconds;
@@ -233,24 +245,40 @@ export class ParticleField {
       p.x += p.vx * deltaSeconds;
       p.y += p.vy * deltaSeconds;
       p.angle += p.spin * deltaSeconds;
+    }
+  }
+
+  /**
+   * Два прохода по списку: сначала обычные частицы, затем светящиеся. Так
+   * свечение всегда ложится поверх пыли, независимо от порядка рождения.
+   */
+  draw(painter: Painter): void {
+    this.drawPass(painter, false);
+    painter.setBlendMode('add');
+    this.drawPass(painter, true);
+    painter.setBlendMode('normal');
+  }
+
+  private drawPass(painter: Painter, additive: boolean): void {
+    for (const p of this.active) {
+      if (p.additive !== additive) continue;
 
       const t = clamp01(p.life / p.maxLife);
       const alpha = t * t;
-      const g = p.additive ? additive : normal;
 
       if (p.shape === 'streak') {
         const speed = Math.hypot(p.vx, p.vy);
         const len = Math.min(16, speed * 0.035);
         const dx = speed > 1 ? (p.vx / speed) * len : 0;
         const dy = speed > 1 ? (p.vy / speed) * len : 0;
-        g.lineStyle(p.size * t, p.color, alpha);
-        g.beginPath();
-        g.moveTo(p.x - dx, p.y - dy);
-        g.lineTo(p.x + dx, p.y + dy);
-        g.strokePath();
+        painter.lineStyle(p.size * t, p.color, alpha);
+        painter.beginPath();
+        painter.moveTo(p.x - dx, p.y - dy);
+        painter.lineTo(p.x + dx, p.y + dy);
+        painter.strokePath();
       } else {
-        g.fillStyle(p.color, alpha);
-        g.fillCircle(p.x, p.y, p.size * (0.4 + t * 0.6));
+        painter.fillStyle(p.color, alpha);
+        painter.fillCircle(p.x, p.y, p.size * (0.4 + t * 0.6));
       }
     }
   }
@@ -258,7 +286,5 @@ export class ParticleField {
   clear(): void {
     for (const particle of this.active) this.pool.push(particle);
     this.active.length = 0;
-    this.normalLayer.clear();
-    this.additiveLayer.clear();
   }
 }

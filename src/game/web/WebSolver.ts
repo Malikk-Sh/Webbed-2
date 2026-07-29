@@ -17,6 +17,9 @@ export class WebSolver {
   /** Время последнего шага решателя в мс — для отладочной панели. */
   lastSolveMs = 0;
 
+  /** Рабочая точка для проверки середины сегмента; не аллоцируется в цикле. */
+  private readonly probe = { x: 0, y: 0 };
+
   constructor(
     private readonly graph: WebGraph,
     private readonly collision: CollisionWorld,
@@ -30,10 +33,19 @@ export class WebSolver {
 
     for (let i = 0; i < iterations; i++) {
       this.solveDistanceConstraints();
-      // Столкновения решаются в середине прохода: если делать их последними,
-      // финальная коррекция длины снова вгоняет частицы в геометрию.
-      if (i === Math.floor(iterations / 2)) this.solveCollisions();
+      // Столкновения решаются в середине прохода: оставшимся итерациям есть
+      // чем разгладить нить после выталкивания.
+      if (i === Math.floor(iterations / 2)) {
+        this.solveCollisions();
+        this.solveSegmentCollisions();
+      }
     }
+
+    // И ещё раз в самом конце. Последние коррекции длины успевают затащить
+    // частицу обратно в камень, кадр заканчивается с проникновением, на
+    // следующем шаге её снова выталкивает — этот цикл и виден как дрожание
+    // нити на кромке.
+    this.solveCollisions();
 
     const broken = this.updateTension(deltaSeconds * 1000);
 
@@ -121,6 +133,54 @@ export class WebSolver {
     for (const particle of this.graph.allParticles) {
       if (particle.pinned || particle.sleeping) continue;
       this.collision.resolvePoint(particle.position, radius);
+    }
+  }
+
+  /**
+   * Столкновения самих отрезков, а не только их концов.
+   *
+   * Частицы стоят через `particleSpacing`, и выступ уже этого шага помещается
+   * между двумя соседними целиком: обе частицы снаружи, а нить между ними
+   * проходит сквозь камень. Проверка середины сегмента ловит ровно этот
+   * случай. Середина — не частица, поэтому найденное смещение раскладывается
+   * на оба конца: двигать надо то, что решатель действительно интегрирует.
+   */
+  private solveSegmentCollisions(): void {
+    const radius = webConfig.segmentRadius;
+
+    for (const strand of this.graph.allStrands) {
+      if (strand.sleeping || !strand.active) continue;
+      const ids = strand.particleIds;
+
+      for (let i = 0; i < ids.length - 1; i++) {
+        const a = this.graph.getParticle(ids[i]!);
+        const b = this.graph.getParticle(ids[i + 1]!);
+        if (!a || !b) continue;
+
+        const movableA = !a.pinned && !a.sleeping;
+        const movableB = !b.pinned && !b.sleeping;
+        if (!movableA && !movableB) continue;
+
+        const midX = (a.position.x + b.position.x) / 2;
+        const midY = (a.position.y + b.position.y) / 2;
+        this.probe.x = midX;
+        this.probe.y = midY;
+        if (!this.collision.resolvePoint(this.probe, radius)) continue;
+
+        const pushX = this.probe.x - midX;
+        const pushY = this.probe.y - midY;
+        // Оба конца свободны — каждому по половине; один закреплён — весь
+        // сдвиг уходит второму, иначе выступ так и останется прорезанным.
+        const share = movableA && movableB ? 1 : 2;
+        if (movableA) {
+          a.position.x += (pushX * share) / 2;
+          a.position.y += (pushY * share) / 2;
+        }
+        if (movableB) {
+          b.position.x += (pushX * share) / 2;
+          b.position.y += (pushY * share) / 2;
+        }
+      }
     }
   }
 

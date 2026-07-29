@@ -1,0 +1,688 @@
+{
+  "id": "flooded-nave",
+  "version": 1,
+  "title": "Затопленный неф · Буря",
+  "theme": "ruins",
+  "worldBounds": {
+    "x": 0,
+    "y": 0,
+    "width": 4600,
+    "height": 1800
+  },
+  "cameraBounds": {
+    "x": 0,
+    "y": 0,
+    "width": 4600,
+    "height": 1640
+  },
+  "spawnPoints": [
+    {
+      "id": "start",
+      "x": 170,
+      "y": 1163,
+      "surfaceNormal": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    {
+      "id": "gallery",
+      "x": 2320,
+      "y": 983,
+      "surfaceNormal": {
+        "x": 0,
+        "y": -1
+      }
+    },
+    {
+      "id": "altar",
+      "x": 3860,
+      "y": 1043,
+      "surfaceNormal": {
+        "x": 0,
+        "y": -1
+      }
+    }
+  ],
+  "checkpoints": [
+    {
+      "id": "checkpoint-start",
+      "spawnPointId": "start",
+      "activation": "automatic"
+    },
+    {
+      "id": "checkpoint-gallery",
+      "spawnPointId": "gallery",
+      "activation": "trigger"
+    },
+    {
+      "id": "checkpoint-altar",
+      "spawnPointId": "altar",
+      "activation": "trigger"
+    }
+  ],
+  "geometry": [
+    {
+      "id": "porch",
+      "type": "rectangle",
+      "x": 0,
+      "y": 1180,
+      "width": 830,
+      "height": 620,
+      "material": "stone"
+    },
+    {
+      "id": "column-a",
+      "type": "rectangle",
+      "x": 900,
+      "y": 700,
+      "width": 120,
+      "height": 1100,
+      "material": "stone"
+    },
+    {
+      "id": "capital-a",
+      "type": "rectangle",
+      "x": 830,
+      "y": 640,
+      "width": 260,
+      "height": 60,
+      "material": "stone"
+    },
+    {
+      "id": "arch-span",
+      "type": "rectangle",
+      "x": 1100,
+      "y": 380,
+      "width": 900,
+      "height": 90,
+      "material": "stone"
+    },
+    {
+      "id": "column-b",
+      "type": "rectangle",
+      "x": 1500,
+      "y": 900,
+      "width": 120,
+      "height": 900,
+      "material": "stone"
+    },
+    {
+      "id": "capital-b",
+      "type": "rectangle",
+      "x": 1430,
+      "y": 840,
+      "width": 260,
+      "height": 60,
+      "material": "stone"
+    },
+    {
+      "id": "nave-gallery",
+      "type": "rectangle",
+      "x": 2200,
+      "y": 1000,
+      "width": 900,
+      "height": 800,
+      "material": "stone"
+    },
+    {
+      "id": "roof-beam",
+      "type": "rectangle",
+      "x": 2300,
+      "y": 520,
+      "width": 700,
+      "height": 60,
+      "material": "wood"
+    },
+    {
+      "id": "column-c",
+      "type": "rectangle",
+      "x": 3400,
+      "y": 820,
+      "width": 120,
+      "height": 980,
+      "material": "stone"
+    },
+    {
+      "id": "capital-c",
+      "type": "rectangle",
+      "x": 3330,
+      "y": 760,
+      "width": 260,
+      "height": 60,
+      "material": "stone"
+    },
+    {
+      "id": "altar-floor",
+      "type": "rectangle",
+      "x": 3800,
+      "y": 1060,
+      "width": 800,
+      "height": 740,
+      "material": "stone"
+    },
+    {
+      "id": "altar-ceiling",
+      "type": "rectangle",
+      "x": 3800,
+      "y": 520,
+      "width": 800,
+      "height": 90,
+      "material": "stone"
+    },
+    {
+      "id": "altar-post",
+      "type": "rectangle",
+      "x": 3900,
+      "y": 610,
+      "width": 70,
+      "height": 450,
+      "material": "metal"
+    },
+    {
+      "id": "wet-step",
+      "type": "rectangle",
+      "x": 2200,
+      "y": 940,
+      "width": 130,
+      "height": 60,
+      "material": "slippery"
+    }
+  ],
+  "anchors": [
+    {
+      "id": "arch-anchor",
+      "x": 1300,
+      "y": 560,
+      "type": "explicit"
+    },
+    {
+      "id": "nave-anchor-b",
+      "x": 1900,
+      "y": 560,
+      "type": "explicit"
+    },
+    {
+      "id": "gallery-anchor",
+      "x": 2650,
+      "y": 620,
+      "type": "explicit"
+    },
+    {
+      "id": "nave-anchor-c",
+      "x": 3200,
+      "y": 620,
+      "type": "explicit"
+    },
+    {
+      "id": "altar-anchor",
+      "x": 3700,
+      "y": 640,
+      "type": "explicit"
+    }
+  ],
+  "objects": [
+    {
+      "id": "bell-weight",
+      "prefab": "hanging-weight",
+      "x": 4150,
+      "y": 800,
+      "properties": {
+        "radius": 44,
+        "mass": 2.6,
+        "anchorX": 4150,
+        "anchorY": 610,
+        "restLength": 190,
+        "cuttable": true
+      }
+    },
+    {
+      "id": "flood-plate",
+      "prefab": "pressure-plate",
+      "x": 4150,
+      "y": 1060,
+      "properties": {
+        "width": 130,
+        "activationMass": 1.5
+      }
+    },
+    {
+      "id": "flood-door",
+      "prefab": "prototype-door",
+      "x": 4340,
+      "y": 610,
+      "properties": {
+        "width": 60,
+        "height": 450,
+        "controlledBy": "flood-plate"
+      }
+    },
+    {
+      "id": "bloom-arch",
+      "prefab": "silk-bloom",
+      "x": 1300,
+      "y": 615
+    },
+    {
+      "id": "bloom-nave",
+      "prefab": "silk-bloom",
+      "x": 1900,
+      "y": 615
+    },
+    {
+      "id": "bloom-beam",
+      "prefab": "silk-bloom",
+      "x": 2650,
+      "y": 620
+    },
+    {
+      "id": "bloom-column",
+      "prefab": "silk-bloom",
+      "x": 3200,
+      "y": 670
+    },
+    {
+      "id": "bloom-altar",
+      "prefab": "silk-bloom",
+      "x": 4000,
+      "y": 700
+    }
+  ],
+  "triggers": [
+    {
+      "id": "water-zone",
+      "type": "rect",
+      "x": -200,
+      "y": 1810,
+      "width": 5000,
+      "height": 300,
+      "action": "respawn"
+    },
+    {
+      "id": "checkpoint-gallery-zone",
+      "type": "rect",
+      "x": 2210,
+      "y": 920,
+      "width": 500,
+      "height": 90,
+      "action": "checkpoint",
+      "checkpointId": "checkpoint-gallery"
+    },
+    {
+      "id": "checkpoint-altar-zone",
+      "type": "rect",
+      "x": 3810,
+      "y": 980,
+      "width": 400,
+      "height": 90,
+      "action": "checkpoint",
+      "checkpointId": "checkpoint-altar"
+    },
+    {
+      "id": "exit-zone",
+      "type": "rect",
+      "x": 4440,
+      "y": 680,
+      "width": 90,
+      "height": 380,
+      "action": "complete-prototype"
+    },
+    {
+      "id": "hint-column",
+      "type": "rect",
+      "x": 520,
+      "y": 1090,
+      "width": 300,
+      "height": 100,
+      "action": "hint",
+      "hintId": "hint-column",
+      "hintText": "Внизу вода. Через щель — прыжком, дальше вверх по колонне",
+      "once": true
+    },
+    {
+      "id": "hint-wet",
+      "type": "rect",
+      "x": 2210,
+      "y": 920,
+      "width": 500,
+      "height": 90,
+      "action": "hint",
+      "hintId": "hint-wet",
+      "hintText": "Мокрый камень скользит и нити не держит — ищите сухую опору",
+      "once": true
+    },
+    {
+      "id": "hint-bell",
+      "type": "rect",
+      "x": 3810,
+      "y": 980,
+      "width": 400,
+      "height": 90,
+      "action": "hint",
+      "hintId": "hint-bell",
+      "hintText": "По столбу — под свод, и ножницами по подвесу: колокол сам найдёт кнопку",
+      "once": true
+    }
+  ],
+  "decor": [
+    {
+      "id": "banner-1",
+      "type": "banner",
+      "x": 1250,
+      "y": 470,
+      "scale": 1.2,
+      "seed": 3,
+      "layer": 1
+    },
+    {
+      "id": "banner-2",
+      "type": "banner",
+      "x": 1550,
+      "y": 470,
+      "scale": 1,
+      "seed": 9,
+      "layer": 1
+    },
+    {
+      "id": "banner-3",
+      "type": "banner",
+      "x": 1850,
+      "y": 470,
+      "scale": 1.15,
+      "seed": 15,
+      "layer": 1
+    },
+    {
+      "id": "banner-4",
+      "type": "banner",
+      "x": 4050,
+      "y": 610,
+      "scale": 1.1,
+      "seed": 21,
+      "layer": 1
+    },
+    {
+      "id": "banner-5",
+      "type": "banner",
+      "x": 4300,
+      "y": 610,
+      "scale": 0.95,
+      "seed": 27,
+      "layer": 1
+    },
+    {
+      "id": "debris-1",
+      "type": "debris",
+      "x": 400,
+      "y": 1180,
+      "scale": 1.3,
+      "seed": 4,
+      "layer": 1
+    },
+    {
+      "id": "debris-2",
+      "type": "debris",
+      "x": 700,
+      "y": 1180,
+      "scale": 1,
+      "seed": 10,
+      "layer": 1
+    },
+    {
+      "id": "debris-3",
+      "type": "debris",
+      "x": 2500,
+      "y": 1000,
+      "scale": 1.2,
+      "seed": 16,
+      "layer": 1
+    },
+    {
+      "id": "debris-4",
+      "type": "debris",
+      "x": 2900,
+      "y": 1000,
+      "scale": 1.4,
+      "seed": 22,
+      "layer": 1
+    },
+    {
+      "id": "debris-5",
+      "type": "debris",
+      "x": 4250,
+      "y": 1060,
+      "scale": 1.1,
+      "seed": 28,
+      "layer": 1
+    },
+    {
+      "id": "web-1",
+      "type": "cobweb",
+      "x": 1106,
+      "y": 476,
+      "scale": 1.4,
+      "angle": 0,
+      "seed": 5,
+      "layer": 1
+    },
+    {
+      "id": "web-2",
+      "type": "cobweb",
+      "x": 1994,
+      "y": 476,
+      "scale": 1.2,
+      "angle": 90,
+      "seed": 11,
+      "layer": 1
+    },
+    {
+      "id": "web-3",
+      "type": "cobweb",
+      "x": 3806,
+      "y": 616,
+      "scale": 1.5,
+      "angle": 0,
+      "seed": 17,
+      "layer": 1
+    },
+    {
+      "id": "web-4",
+      "type": "cobweb",
+      "x": 2306,
+      "y": 586,
+      "scale": 1.1,
+      "angle": 0,
+      "seed": 23,
+      "layer": 1
+    },
+    {
+      "id": "chain-1",
+      "type": "chain",
+      "x": 2450,
+      "y": 580,
+      "scale": 1.2,
+      "seed": 6,
+      "layer": 1
+    },
+    {
+      "id": "chain-2",
+      "type": "chain",
+      "x": 2850,
+      "y": 580,
+      "scale": 1,
+      "seed": 12,
+      "layer": 1
+    },
+    {
+      "id": "chain-3",
+      "type": "chain",
+      "x": 3700,
+      "y": 610,
+      "scale": 1.1,
+      "seed": 18,
+      "layer": 1
+    },
+    {
+      "id": "stal-1",
+      "type": "stalactite",
+      "x": 1400,
+      "y": 470,
+      "scale": 1.1,
+      "seed": 7,
+      "layer": 1
+    },
+    {
+      "id": "stal-2",
+      "type": "stalactite",
+      "x": 1700,
+      "y": 470,
+      "scale": 0.9,
+      "seed": 13,
+      "layer": 1
+    },
+    {
+      "id": "stal-3",
+      "type": "stalactite",
+      "x": 4450,
+      "y": 610,
+      "scale": 1.2,
+      "seed": 19,
+      "layer": 1
+    },
+    {
+      "id": "root-1",
+      "type": "root",
+      "x": 960,
+      "y": 710,
+      "scale": 1.4,
+      "seed": 8,
+      "layer": 0
+    },
+    {
+      "id": "root-2",
+      "type": "root",
+      "x": 1560,
+      "y": 910,
+      "scale": 1.2,
+      "seed": 14,
+      "layer": 0
+    },
+    {
+      "id": "root-3",
+      "type": "root",
+      "x": 3460,
+      "y": 830,
+      "scale": 1.3,
+      "seed": 20,
+      "layer": 0
+    },
+    {
+      "id": "vine-1",
+      "type": "vine",
+      "x": 880,
+      "y": 660,
+      "scale": 1.3,
+      "seed": 24,
+      "layer": 1
+    },
+    {
+      "id": "vine-2",
+      "type": "vine",
+      "x": 3350,
+      "y": 780,
+      "scale": 1.1,
+      "seed": 30,
+      "layer": 1
+    },
+    {
+      "id": "plant-1",
+      "type": "plant",
+      "x": 2340,
+      "y": 1000,
+      "scale": 1.2,
+      "seed": 25,
+      "layer": 1
+    },
+    {
+      "id": "plant-2",
+      "type": "plant",
+      "x": 3980,
+      "y": 1060,
+      "scale": 1.1,
+      "seed": 31,
+      "layer": 1
+    },
+    {
+      "id": "grass-1",
+      "type": "grass",
+      "x": 600,
+      "y": 1180,
+      "scale": 1,
+      "seed": 26,
+      "layer": 1
+    },
+    {
+      "id": "grass-2",
+      "type": "grass",
+      "x": 2750,
+      "y": 1000,
+      "scale": 1,
+      "seed": 32,
+      "layer": 1
+    },
+    {
+      "id": "glass-1",
+      "type": "glass-pane",
+      "x": 1550,
+      "y": 120,
+      "scale": 1.8,
+      "seed": 33,
+      "layer": 0
+    },
+    {
+      "id": "glass-2",
+      "type": "glass-pane",
+      "x": 3100,
+      "y": 150,
+      "scale": 1.5,
+      "seed": 35,
+      "layer": 0
+    },
+    {
+      "id": "lamp-1",
+      "type": "lamp",
+      "x": 2650,
+      "y": 580,
+      "scale": 1.1,
+      "seed": 29,
+      "layer": 1
+    },
+    {
+      "id": "fore-debris-1",
+      "type": "debris",
+      "x": 1500,
+      "y": 1640,
+      "scale": 2.0,
+      "seed": 37,
+      "layer": 2
+    },
+    {
+      "id": "fore-debris-2",
+      "type": "debris",
+      "x": 3300,
+      "y": 1660,
+      "scale": 2.2,
+      "seed": 39,
+      "layer": 2
+    },
+    {
+      "id": "fore-banner",
+      "type": "banner",
+      "x": 2100,
+      "y": 180,
+      "scale": 1.8,
+      "seed": 41,
+      "layer": 2
+    }
+  ]
+}

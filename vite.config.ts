@@ -2,8 +2,15 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
+const buildId = new Date().toISOString().slice(0, 16).replace('T', ' ');
+
 export default defineConfig({
   base: './',
+  define: {
+    // Строка сборки видна в настройках: по ней сразу понятно, работает ли
+    // игрок на свежей версии или service worker отдаёт закэшированную старую.
+    __BUILD_ID__: JSON.stringify(buildId),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -12,14 +19,7 @@ export default defineConfig({
   build: {
     target: 'es2020',
     sourcemap: true,
-    chunkSizeWarningLimit: 1600,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          phaser: ['phaser'],
-        },
-      },
-    },
+    chunkSizeWarningLimit: 700,
   },
   server: {
     host: true,

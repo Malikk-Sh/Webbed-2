@@ -1,28 +1,41 @@
-import Phaser from 'phaser';
 import { events } from '../core/events/EventBus';
 import type { RunStats } from '../core/events/GameEvents';
+import { Camera2D } from '../engine/Camera2D';
+import { GameLoop } from '../engine/GameLoop';
+import { Painter } from '../engine/Painter';
+import { Surface } from '../engine/Surface';
+import { textures } from '../engine/TextureStore';
 import { audio } from '../game/audio/AudioEngine';
 import { InputSystem } from '../game/input/InputSystem';
 import { settingsRepository } from '../game/save/SettingsRepository';
 import { PrototypeScene } from '../game/scenes/PrototypeScene';
 import { PrototypeHud } from '../game/ui/PrototypeHud';
-import { ShellUi, type ShellAction } from './ShellUi';
-import { PALETTE } from './Palette';
 import { createRuntimeTextures } from '../game/render/TextureFactory';
+import {
+  CHAPTERS,
+  getChapter,
+  nextChapter,
+  type Chapter,
+} from '../game/level/LevelCatalog';
+import { ShellUi, type ChapterEntry, type ShellAction } from './ShellUi';
 
 /**
- * Точка сборки приложения: игра Phaser, ввод, интерфейс и жизненный цикл
- * вкладки. Здесь же живёт правило «после сворачивания не продолжаем игру
+ * Точка сборки приложения: холст, цикл кадра, ввод, интерфейс и жизненный
+ * цикл вкладки. Здесь же живёт правило «после сворачивания не продолжаем игру
  * автоматически, а показываем паузу» из раздела 36 ТЗ.
  */
 export class GameApp {
-  private game: Phaser.Game | null = null;
+  private surface: Surface | null = null;
+  private painter: Painter | null = null;
+  private loop: GameLoop | null = null;
+  private scene: PrototypeScene | null = null;
   private input: InputSystem | null = null;
+  private readonly camera = new Camera2D();
+  private readonly hud = new PrototypeHud();
   private readonly shell = new ShellUi();
-  private renderScale = 1;
   private started = false;
   private paused = false;
-  private resizeRaf = 0;
+  private chapter: Chapter = CHAPTERS[0]!;
 
   async boot(): Promise<void> {
     this.shell.setLoadingProgress(0.1, 'Пробуем нить на прочность…');
@@ -34,123 +47,131 @@ export class GameApp {
     const parent = document.getElementById('game-root');
     if (!parent) throw new Error('Не найден контейнер #game-root');
 
-    this.renderScale = this.computeRenderScale();
+    this.surface = new Surface(parent);
+    const painter = new Painter(this.surface.ctx);
+    painter.bind(this.surface.ctx);
 
-    this.game = new Phaser.Game({
-      type: Phaser.AUTO,
-      parent,
-      backgroundColor: PALETTE.skyTop,
-      scale: {
-        mode: Phaser.Scale.NONE,
-        width: Math.max(1, Math.floor(window.innerWidth * this.renderScale)),
-        height: Math.max(1, Math.floor(window.innerHeight * this.renderScale)),
-      },
-      render: {
-        antialias: true,
-        roundPixels: false,
-        powerPreference: 'high-performance',
-      },
-      physics: {
-        default: 'matter',
-        matter: {
-          enableSleeping: true,
-          gravity: { x: 0, y: 1.75 },
-          // Отладочная отрисовка Matter не нужна: свой слой информативнее.
-          debug: false,
-        },
-      },
-      fps: {
-        target: 60,
-        min: 30,
-        smoothStep: true,
-      },
-      // Сцены добавляются вручную после готовности игры: им нужны ссылки на
-      // ввод и интерфейс ещё до первого `create()`.
-      scene: [],
-      audio: { noAudio: true },
-      banner: false,
-    });
-
-    await this.waitForGameReady();
-    // Текстуры готовятся до старта сцен: ими пользуется и HUD, и мир.
-    createRuntimeTextures(this.game.textures);
+    // Текстуры готовятся до первой отрисовки: ими пользуются и мир, и
+    // интерфейс, и подставлять заглушку в первом кадре некуда.
+    createRuntimeTextures(textures);
     this.shell.setLoadingProgress(0.7, 'Развешиваем капли росы…');
 
-    const canvas = this.game.canvas;
-    this.applyCanvasStyle(canvas);
-    this.input = new InputSystem(canvas);
-    this.input.setRenderScale(this.renderScale);
+    this.input = new InputSystem(this.surface.canvas);
+    this.camera.setViewport(this.surface.width, this.surface.height);
 
-    const scene = this.game.scene.add(
-      'PrototypeScene',
-      PrototypeScene,
-      false,
-    ) as unknown as PrototypeScene;
-    const hud = this.game.scene.add(
-      'PrototypeHud',
-      PrototypeHud,
-      false,
-    ) as unknown as PrototypeHud;
+    this.loop = new GameLoop((deltaMs, timeMs) => this.scene?.frame(deltaMs, timeMs));
+    this.loop.setFrameCap(settingsRepository.current.frameCap);
 
-    hud.configure({
+    // Кампания продолжается с первой непройденной главы: возвращаться каждый
+    // раз в оранжерею после четвёртой комнаты было бы издевательством.
+    this.chapter = this.firstUnfinishedChapter();
+
+    this.hud.configure({
       input: this.input,
-      renderScale: this.renderScale,
-      getWebLoad: () => scene.webLoad,
-      getCutAvailable: () => scene.cutAvailable,
-      getAiming: () => scene.aiming,
-      getTethered: () => scene.tethered,
-      getAnchorable: () => scene.anchorable,
+      getWebLoad: () => this.scene?.webLoad ?? 0,
+      getCutAvailable: () => this.scene?.cutAvailable ?? false,
+      getAiming: () => this.scene?.aiming ?? false,
+      getTethered: () => this.scene?.tethered ?? false,
+      getAnchorable: () => this.scene?.anchorable ?? false,
+      getFps: () => this.loop?.fps ?? 0,
     });
+    this.hud.resize(this.surface.width, this.surface.height);
 
-    scene.configure({
-      input: this.input,
-      hud,
-      onComplete: (stats) => this.handleComplete(stats),
-      onPauseRequested: () => this.pause(false),
-    });
+    this.buildScene(painter);
+    this.surface.onResize((surface) => this.camera.setViewport(surface.width, surface.height));
 
-    // HUD запускается первым, чтобы его `create()` успел построить слои до
-    // того, как игровая сцена начнёт обращаться к подсказкам и затемнению;
-    // затем он поднимается наверх, поверх мира.
-    this.game.scene.start('PrototypeHud');
-    this.game.scene.start('PrototypeScene');
-    this.game.scene.bringToTop('PrototypeHud');
-
-    this.bindShell(scene);
-    this.bindLifecycle(scene);
+    this.bindShell();
+    this.bindLifecycle();
 
     settingsRepository.onChange((settings) => {
       audio.setVolumes(settings.masterVolume, settings.musicVolume, settings.sfxVolume);
       this.applyDocumentSettings();
-      if (this.game) this.game.loop.targetFps = settings.frameCap;
+      this.loop?.setFrameCap(settings.frameCap);
+      this.scene?.applyQuality();
     });
+
+    // Цикл крутится всегда: в меню сцена не обновляет симуляцию, но продолжает
+    // рисовать живой мир за полупрозрачным интерфейсом.
+    this.loop.start();
 
     this.shell.setLoadingProgress(1, 'Готово');
     window.setTimeout(() => this.shell.show('menu'), 320);
   }
 
-  private waitForGameReady(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.game) {
-        resolve();
-        return;
-      }
-      this.game.events.once(Phaser.Core.Events.READY, () => resolve());
-      // Страховка: если событие уже прошло, не подвисаем на загрузке.
-      window.setTimeout(resolve, 3000);
+  /**
+   * Пересоздание сцены под главу.
+   *
+   * Комнату проще собрать заново, чем перезаряжать: сцена держит собственный
+   * физический мир, буферы фигур и подписки на события, и «очистить» их до
+   * состояния новой комнаты — это тот же объём работы, только с риском забыть
+   * одно поле. Пересборка идёт раз на главу и стоит доли секунды.
+   */
+  private buildScene(painter: Painter): void {
+    this.scene?.destroy();
+    this.scene = new PrototypeScene({
+      surface: this.surface!,
+      camera: this.camera,
+      painter,
+      input: this.input!,
+      hud: this.hud,
+      level: this.chapter.definition,
+      getFps: () => this.loop?.fps ?? 0,
+      onComplete: (stats) => this.handleComplete(stats),
+      onPauseRequested: () => this.pause(false),
+    });
+    this.painter = painter;
+    this.shell.setPlayNote(`Глава ${this.chapter.numeral} · ${this.chapter.title}`);
+    const done = CHAPTERS.filter((item) => settingsRepository.isChapterCompleted(item.id)).length;
+    this.shell.setChaptersNote(`Пройдено ${done} из ${CHAPTERS.length}`);
+  }
+
+  /** Первая непройденная глава, а если пройдены все — последняя. */
+  private firstUnfinishedChapter(): Chapter {
+    const found = CHAPTERS.find((chapter) => !settingsRepository.isChapterCompleted(chapter.id));
+    return found ?? CHAPTERS[CHAPTERS.length - 1]!;
+  }
+
+  /**
+   * Открытые главы.
+   *
+   * Открыта первая, любая пройденная и следующая за последней пройденной.
+   * Проверка идёт по порядку в каталоге, а не по числу пройденных: если игрок
+   * перепройдёт вторую главу, третья от этого закрыться не должна.
+   */
+  private chapterEntries(): ChapterEntry[] {
+    let unlocked = true;
+    return CHAPTERS.map((chapter) => {
+      const completed = settingsRepository.isChapterCompleted(chapter.id);
+      const entry: ChapterEntry = {
+        index: chapter.index,
+        numeral: chapter.numeral,
+        title: chapter.title,
+        subtitle: chapter.subtitle,
+        unlocked,
+        completed,
+        current: chapter.index === this.chapter.index,
+        bestTimeMs: settingsRepository.chapterBestTime(chapter.id),
+        blooms: settingsRepository.chapterBloomRecord(chapter.id),
+        bloomsTotal: chapter.definition.objects.filter((o) => o.prefab === 'silk-bloom').length,
+      };
+      unlocked = completed;
+      return entry;
     });
   }
 
-  private computeRenderScale(): number {
-    // Рендер в физических пикселях, но не выше 2× — на телефонах с DPR 3
-    // третий множитель почти не виден, а стоит трети кадрового бюджета.
-    return Math.min(window.devicePixelRatio || 1, 2);
-  }
+  private startChapter(index: number): void {
+    const chapter = getChapter(index);
+    const painter = this.painter;
+    if (!painter) return;
 
-  private applyCanvasStyle(canvas: HTMLCanvasElement): void {
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.display = 'block';
+    this.chapter = chapter;
+    // Сцена перезапускает комнату сама при сборке — второй вызов только сбил
+    // бы уже показанное название.
+    this.buildScene(painter);
+    this.started = true;
+    const scene = this.scene;
+    if (!scene) return;
+    this.resume(scene);
   }
 
   private applyDocumentSettings(): void {
@@ -160,8 +181,11 @@ export class GameApp {
 
   // ------------------------------------------------------------------ шелл
 
-  private bindShell(scene: PrototypeScene): void {
+  private bindShell(): void {
     this.shell.onAction((action: ShellAction) => {
+      const scene = this.scene;
+      if (!scene) return;
+
       switch (action) {
         case 'play':
           void this.startGame(scene);
@@ -170,12 +194,12 @@ export class GameApp {
           this.resume(scene);
           break;
         case 'restart':
-          scene.restartRoom();
-          this.resume(scene);
-          break;
         case 'replay':
           scene.restartRoom();
           this.resume(scene);
+          break;
+        case 'next':
+          void this.startNextChapter();
           break;
         case 'quit':
           this.stopGame(scene);
@@ -184,6 +208,24 @@ export class GameApp {
           break;
       }
     });
+
+    this.shell.configureChapters(
+      () => this.chapterEntries(),
+      (index) => {
+        void audio.unlock();
+        this.startChapter(index);
+      },
+    );
+  }
+
+  private async startNextChapter(): Promise<void> {
+    await audio.unlock();
+    const next = nextChapter(this.chapter.index);
+    if (!next) {
+      this.shell.show('menu');
+      return;
+    }
+    this.startChapter(next.index);
   }
 
   private async startGame(scene: PrototypeScene): Promise<void> {
@@ -199,6 +241,7 @@ export class GameApp {
   private resume(scene: PrototypeScene): void {
     this.shell.show(null);
     this.paused = false;
+    this.loop?.resetTiming();
     scene.setRunning(true);
     this.input?.setEnabled(true);
     audio.resume();
@@ -208,8 +251,7 @@ export class GameApp {
   private pause(fromSystem: boolean): void {
     if (this.paused || !this.started) return;
     this.paused = true;
-    const scene = this.game?.scene.getScene('PrototypeScene') as unknown as PrototypeScene | undefined;
-    scene?.setRunning(false);
+    this.scene?.setRunning(false);
     this.input?.setEnabled(false);
     settingsRepository.flush();
     if (fromSystem) audio.suspend();
@@ -227,17 +269,24 @@ export class GameApp {
   }
 
   private handleComplete(stats: RunStats): void {
-    settingsRepository.recordCompletion(stats.timeMs);
-    const scene = this.game?.scene.getScene('PrototypeScene') as unknown as PrototypeScene | undefined;
-    scene?.setRunning(false);
+    const chapter = this.chapter;
+    settingsRepository.recordCompletion(chapter.id, stats.timeMs, stats.bloomsCollected);
+    this.scene?.setRunning(false);
     this.paused = true;
     this.started = false;
-    this.shell.showResults(stats, settingsRepository.currentProgress.bestTimeMs);
+
+    const following = nextChapter(chapter.index);
+    this.shell.showResults(stats, {
+      chapterNumeral: chapter.numeral,
+      chapterTitle: chapter.title,
+      bestTimeMs: settingsRepository.chapterBestTime(chapter.id),
+      nextTitle: following ? `Глава ${following.numeral} · ${following.title}` : null,
+    });
   }
 
   // ------------------------------------------------------- жизненный цикл
 
-  private bindLifecycle(scene: PrototypeScene): void {
+  private bindLifecycle(): void {
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) this.pauseFromSystem();
       else this.resumeFromSystem();
@@ -246,9 +295,6 @@ export class GameApp {
     window.addEventListener('pagehide', () => this.pauseFromSystem());
     window.addEventListener('blur', () => this.pauseFromSystem());
 
-    window.addEventListener('resize', () => this.scheduleResize());
-    window.addEventListener('orientationchange', () => window.setTimeout(() => this.resize(), 180));
-
     // Первое касание разблокирует звук: браузеры не дают включить
     // AudioContext без жеста пользователя.
     const unlock = () => {
@@ -256,8 +302,6 @@ export class GameApp {
     };
     window.addEventListener('pointerdown', unlock, { once: true });
     window.addEventListener('keydown', unlock, { once: true });
-
-    void scene;
   }
 
   pauseFromSystem(): void {
@@ -269,31 +313,16 @@ export class GameApp {
     // Игра сознательно не продолжается сама: игрок мог вернуться в опасный
     // момент, поэтому его встречает меню паузы.
     audio.resume();
-    this.resize();
-  }
-
-  private scheduleResize(): void {
-    if (this.resizeRaf) cancelAnimationFrame(this.resizeRaf);
-    this.resizeRaf = requestAnimationFrame(() => {
-      this.resizeRaf = 0;
-      this.resize();
-    });
-  }
-
-  private resize(): void {
-    if (!this.game) return;
-    this.renderScale = this.computeRenderScale();
-    const width = Math.max(1, Math.floor(window.innerWidth * this.renderScale));
-    const height = Math.max(1, Math.floor(window.innerHeight * this.renderScale));
-    this.game.scale.resize(width, height);
-    this.applyCanvasStyle(this.game.canvas);
-    this.input?.setRenderScale(this.renderScale);
-    this.input?.touch.invalidateRect();
-    const hud = this.game.scene.getScene('PrototypeHud') as unknown as PrototypeHud | undefined;
-    hud?.setRenderScale(this.renderScale);
+    this.loop?.resetTiming();
+    this.surface?.resize();
   }
 
   get shellUi(): ShellUi {
     return this.shell;
+  }
+
+  /** Переход к главе из консоли разработчика и браузерных тестов. */
+  openChapterForTest(index: number): void {
+    this.startChapter(index);
   }
 }

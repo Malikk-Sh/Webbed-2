@@ -26,6 +26,11 @@ export interface InputFrame {
   /** Направление прицеливания, единичный вектор; нули — не задано. */
   aimX: number;
   aimY: number;
+  /**
+   * Насколько уверенно задано направление прицела, 0..1. Ноль означает
+   * «направление взято по инерции, игрок его сейчас не задаёт».
+   */
+  aimStrength: number;
   /** Игрок задал прицел явно (стик или палец), а не по инерции движения. */
   aimExplicit: boolean;
 
@@ -52,6 +57,7 @@ export const createInputFrame = (): InputFrame => ({
   pausePressed: false,
   aimX: 0,
   aimY: 0,
+  aimStrength: 0,
   aimExplicit: false,
   pointerWorldX: null,
   pointerWorldY: null,

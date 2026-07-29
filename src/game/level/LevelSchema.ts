@@ -55,7 +55,12 @@ export interface LevelAnchor {
 
 export interface LevelObject {
   id: string;
-  prefab: 'dynamic-crate' | 'hanging-weight' | 'pressure-plate' | 'prototype-door';
+  prefab:
+    | 'dynamic-crate'
+    | 'hanging-weight'
+    | 'pressure-plate'
+    | 'prototype-door'
+    | 'silk-bloom';
   x: number;
   y: number;
   properties?: Record<string, number | string | boolean>;
@@ -77,9 +82,26 @@ export interface LevelTrigger {
   once?: boolean;
 }
 
+export type LevelDecorType =
+  | 'plant'
+  | 'vine'
+  | 'pot'
+  | 'glass-pane'
+  | 'root'
+  | 'lamp'
+  | 'grass'
+  | 'mushroom'
+  | 'crystal'
+  | 'cobweb'
+  | 'chain'
+  | 'banner'
+  | 'debris'
+  | 'fern'
+  | 'stalactite';
+
 export interface LevelDecor {
   id: string;
-  type: 'plant' | 'vine' | 'pot' | 'glass-pane' | 'root' | 'lamp' | 'grass';
+  type: LevelDecorType;
   x: number;
   y: number;
   scale?: number;
@@ -93,6 +115,8 @@ export interface LevelDefinition {
   id: string;
   version: number;
   title: string;
+  /** Идентификатор темы из LevelTheme; по умолчанию — оранжерея. */
+  theme?: string;
   worldBounds: LevelRect;
   cameraBounds: LevelRect;
   spawnPoints: LevelSpawnPoint[];

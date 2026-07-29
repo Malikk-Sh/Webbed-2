@@ -31,6 +31,7 @@ export interface GameEventMap {
   'object:plate-changed': { plateId: string; active: boolean; mass: number };
   'object:door-changed': { doorId: string; state: string };
   'object:impact': { position: Vector2; strength: number };
+  'object:bloom-collected': { bloomId: string; position: Vector2; collected: number; total: number };
 
   'level:checkpoint': { checkpointId: string; position: Vector2 };
   'level:completed': { stats: RunStats };
@@ -53,6 +54,9 @@ export interface RunStats {
   peakStrands: number;
   jumps: number;
   swingTimeMs: number;
+  /** Собрано шёлковых бутонов и сколько их было в комнате. */
+  bloomsCollected: number;
+  bloomsTotal: number;
 }
 
 export type GameEventName = keyof GameEventMap;

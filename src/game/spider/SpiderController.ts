@@ -7,14 +7,13 @@ import { events } from '../../core/events/EventBus';
 import { clamp, damp } from '../../core/math/Interpolation';
 import { dot, length, normalize, type Vector2 } from '../../core/math/Vector2';
 import type { CollisionWorld } from '../physics/CollisionWorld';
-import { MatterLib } from '../physics/MatterLib';
-import { getVelocity, velocityToMatter } from '../physics/MatterUnits';
+import type { RigidBody } from '../../engine/physics/RigidBody';
 import type { InputFrame } from '../input/InputFrame';
 import { SpiderStateMachine } from './SpiderStateMachine';
 import { SpiderSurfaceSensor, type SurfaceContact } from './SpiderSurfaceSensor';
 
 export interface SpiderControllerDeps {
-  body: MatterJS.BodyType;
+  body: RigidBody;
   world: CollisionWorld;
   state: SpiderStateMachine;
 }
@@ -23,10 +22,10 @@ export interface SpiderControllerDeps {
  * Движение паучихи: сцепление с поверхностью, бег по любой стороне
  * геометрии, прыжок с помощью игроку и управление в воздухе.
  *
- * Скорость задаётся напрямую, а не через силы Matter. Для персонажа, которым
+ * Скорость задаётся напрямую, а не через силы. Для персонажа, которым
  * управляет игрок, это единственный способ получить одинаковый отклик на
- * камне, металле и потолке — интегратор Matter иначе размазывает ускорение
- * по-разному в зависимости от накопленной скорости.
+ * камне, металле и потолке: при управлении силами интегратор размазывает
+ * ускорение по-разному в зависимости от накопленной скорости.
  */
 export class SpiderController {
   readonly sensor: SpiderSurfaceSensor;
@@ -39,6 +38,12 @@ export class SpiderController {
 
   /** Сглаженный визуальный угол корпуса. */
   visualAngle = 0;
+  /**
+   * Куда для героя «вверх» прямо сейчас: опорная нормаль, направление на
+   * точку крепления нити или мировой верх в свободном падении. Из этого
+   * вектора выводятся и угол корпуса, и направление взгляда.
+   */
+  readonly orientationUp: Vector2 = { x: 0, y: -1 };
   /** Точка крепления активной нити — задаётся сценой для ориентации корпуса. */
   tetherAnchor: Vector2 | null = null;
   /** Насколько герой «сжат» после удара, 0..1 — читает визуализация. */
@@ -48,7 +53,7 @@ export class SpiderController {
   /** Мгновенное ускорение — визуализация наклоняет корпус по нему. */
   readonly smoothedAcceleration: Vector2 = { x: 0, y: 0 };
 
-  private readonly body: MatterJS.BodyType;
+  private readonly body: RigidBody;
   private readonly state: SpiderStateMachine;
 
   private coyoteMs = 0;
@@ -60,7 +65,16 @@ export class SpiderController {
   private controlLockMs = 0;
   private distanceTravelled = 0;
   private stepAccumulator = 0;
-  /** Направление взгляда: +1 вправо вдоль касательной, -1 влево. */
+  /**
+   * Направление взгляда в системе координат самого героя: +1 — вперёд вдоль
+   * локальной оси X, −1 — назад.
+   *
+   * Именно локальное, а не экранное. Корпус рисуется в системе, повёрнутой
+   * опорной нормалью, и на потолке локальная ось X смотрит влево по экрану.
+   * Пока знак брался из мировой координаты X, на потолке паучиха шла задом
+   * наперёд, а на стене, где у касательной мировой X около нуля, знак ещё и
+   * дрожал от кадра к кадру.
+   */
   facing = 1;
 
   constructor(deps: SpiderControllerDeps) {
@@ -89,8 +103,8 @@ export class SpiderController {
   }
 
   teleport(position: Vector2, normal: Vector2): void {
-    MatterLib.Body.setPosition(this.body, { x: position.x, y: position.y });
-    MatterLib.Body.setVelocity(this.body, { x: 0, y: 0 });
+    this.body.setPosition(position.x, position.y);
+    this.body.setVelocity(0, 0);
     this.velocity.x = 0;
     this.velocity.y = 0;
     this.attached = true;
@@ -123,12 +137,12 @@ export class SpiderController {
   setVelocity(velocity: Vector2): void {
     this.velocity.x = velocity.x;
     this.velocity.y = velocity.y;
-    MatterLib.Body.setVelocity(this.body, velocityToMatter(velocity));
+    this.body.setVelocity(velocity.x, velocity.y);
   }
 
   /** Записывает текущую скорость в тело — после ручных правок вектора. */
   syncVelocityToBody(): void {
-    MatterLib.Body.setVelocity(this.body, velocityToMatter(this.velocity));
+    this.body.setVelocity(this.velocity.x, this.velocity.y);
   }
 
   /**
@@ -136,25 +150,21 @@ export class SpiderController {
    * нити: маятник корректирует положение, но не гасит движение по дуге.
    */
   teleportRelative(dx: number, dy: number): void {
-    MatterLib.Body.setPosition(this.body, {
-      x: this.body.position.x + dx,
-      y: this.body.position.y + dy,
-    });
+    this.body.setPosition(this.body.position.x + dx, this.body.position.y + dy);
   }
 
   addVelocity(delta: Vector2): void {
     this.setVelocity({ x: this.velocity.x + delta.x, y: this.velocity.y + delta.y });
   }
 
-  /** Основной шаг. Вызывается с фиксированным шагом до обновления Matter. */
+  /** Основной шаг. Вызывается с фиксированным шагом до шага физики. */
   fixedUpdate(deltaSeconds: number, input: InputFrame, tethered: boolean): void {
     const deltaMs = deltaSeconds * 1000;
     const previousVelocity = { x: this.velocity.x, y: this.velocity.y };
 
-    // Matter мог изменить скорость столкновением с ящиком — читаем актуальную.
-    const current = getVelocity(this.body);
-    this.velocity.x = current.x;
-    this.velocity.y = current.y;
+    // Столкновение с ящиком могло изменить скорость — читаем актуальную.
+    this.velocity.x = this.body.velocity.x;
+    this.velocity.y = this.body.velocity.y;
 
     this.detachCooldownMs = Math.max(0, this.detachCooldownMs - deltaMs);
     this.stunMs = Math.max(0, this.stunMs - deltaMs);
@@ -166,6 +176,10 @@ export class SpiderController {
 
     const allowAttach = this.detachCooldownMs <= 0 && !tethered;
     this.updateAttachment(contact, allowAttach, deltaMs);
+
+    // Ориентация считается до движения: от неё зависит, какое направление
+    // взгляда получится из ввода.
+    this.updateOrientationUp(contact, tethered);
 
     if (input.jumpPressed) this.jumpBufferMs = spiderMovementConfig.jumpBufferMs;
     else this.jumpBufferMs = Math.max(0, this.jumpBufferMs - deltaMs);
@@ -183,7 +197,7 @@ export class SpiderController {
 
     this.applyVelocityToBody();
     this.resolvePenetration();
-    this.updateVisualAngle(contact, deltaSeconds, tethered);
+    this.updateVisualAngle(deltaSeconds);
     this.updateStepEvents(deltaSeconds);
 
     // Сглаженное ускорение нужно визуализации: по нему корпус наклоняется
@@ -300,7 +314,11 @@ export class SpiderController {
 
     if (Math.abs(along) > 0.02) {
       this.sensor.alignTangent({ x: base.x * Math.sign(along), y: base.y * Math.sign(along) });
-      this.facing = base.x * Math.sign(along) >= 0 ? 1 : -1;
+      // `base` — это и есть локальная ось X героя на поверхности: угол корпуса
+      // задан как atan2(n.x, −n.y), а её направление в мире равно (−n.y, n.x).
+      // Поэтому знак проекции стика на касательную — готовое локальное
+      // направление взгляда, и переводить его через мировые оси не нужно.
+      this.facing = along >= 0 ? 1 : -1;
     }
 
     const tangent = { x: base.x, y: base.y };
@@ -362,7 +380,12 @@ export class SpiderController {
         if (this.velocity.x < target) this.velocity.x = Math.min(target, this.velocity.x + step);
         else if (this.velocity.x > target) this.velocity.x = Math.max(target, this.velocity.x - step);
       }
-      this.facing = desired >= 0 ? 1 : -1;
+      this.updateFacing({ x: desired, y: 0 });
+    } else if (tethered) {
+      // На нити «вверх» указывает на точку крепления, поэтому локальная ось X
+      // идёт по касательной к дуге. Взгляд следует за движением по дуге, иначе
+      // на раскачивании Люма висела бы спиной вперёд.
+      this.updateFacing(this.velocity);
     }
 
     if (!tethered) this.state.request('Airborne');
@@ -436,7 +459,7 @@ export class SpiderController {
       this.velocity.y = 0;
       console.warn('[SpiderController] Некорректная скорость сброшена');
     }
-    MatterLib.Body.setVelocity(this.body, velocityToMatter(this.velocity));
+    this.body.setVelocity(this.velocity.x, this.velocity.y);
   }
 
   /** Страховка от проникновения в геометрию на большой скорости. */
@@ -447,10 +470,7 @@ export class SpiderController {
     const push = query.inside
       ? spiderBodyConfig.radius + Math.abs(query.distance)
       : spiderBodyConfig.radius - query.distance;
-    MatterLib.Body.setPosition(this.body, {
-      x: position.x + query.normal.x * push,
-      y: position.y + query.normal.y * push,
-    });
+    this.body.setPosition(position.x + query.normal.x * push, position.y + query.normal.y * push);
   }
 
   /**
@@ -460,30 +480,62 @@ export class SpiderController {
    * нормалью: `atan2(n.x, -n.y)`. На полу это ноль, на левой стене −90°,
    * на потолке 180° — мир при этом не вращается, вращается только Люма.
    */
-  private updateVisualAngle(
-    contact: SurfaceContact | null,
-    deltaSeconds: number,
-    tethered: boolean,
-  ): void {
-    let up: Vector2;
+  /** Куда для героя «вверх»: опора, точка крепления нити или мировой верх. */
+  private updateOrientationUp(contact: SurfaceContact | null, tethered: boolean): void {
+    const up = this.orientationUp;
 
     if (this.attached && contact) {
-      up = contact.normal;
-    } else if (tethered && this.tetherAnchor) {
+      up.x = contact.normal.x;
+      up.y = contact.normal.y;
+      return;
+    }
+
+    if (tethered && this.tetherAnchor) {
       // На нити Люма висит «макушкой» к точке крепления.
       const dx = this.tetherAnchor.x - this.body.position.x;
       const dy = this.tetherAnchor.y - this.body.position.y;
       const len = Math.hypot(dx, dy) || 1;
-      up = { x: dx / len, y: dy / len };
-    } else {
-      // В свободном падении герой разворачивается брюшком вниз, слегка
-      // наклоняясь по направлению полёта.
-      const speed = length(this.velocity);
-      const tilt = speed > 40 ? clamp(this.velocity.x / 900, -0.4, 0.4) : 0;
-      up = { x: tilt, y: -1 };
+      up.x = dx / len;
+      up.y = dy / len;
+      return;
     }
 
-    const targetAngle = Math.atan2(up.x, -up.y);
+    // В свободном падении герой разворачивается брюшком вниз, слегка
+    // наклоняясь по направлению полёта.
+    const speed = length(this.velocity);
+    const tilt = speed > 40 ? clamp(this.velocity.x / 900, -0.4, 0.4) : 0;
+    const len = Math.hypot(tilt, 1);
+    up.x = tilt / len;
+    up.y = -1 / len;
+  }
+
+  /**
+   * Разворот по желаемому направлению движения в мире.
+   *
+   * Направление проецируется на локальную ось X героя. Её мировое
+   * направление — (−up.y, up.x): угол корпуса задан как atan2(up.x, −up.y),
+   * а косинус и синус этого угла дают ровно эту пару. Благодаря проекции
+   * правило «смотрю туда, куда иду» работает одинаково на полу, на потолке,
+   * на стене и на раскачивающейся нити.
+   */
+  private updateFacing(worldDirection: Vector2): void {
+    const magnitude = Math.hypot(worldDirection.x, worldDirection.y);
+    if (magnitude < 1e-3) return;
+
+    const forwardX = -this.orientationUp.y;
+    const forwardY = this.orientationUp.x;
+    const projection =
+      (worldDirection.x * forwardX + worldDirection.y * forwardY) / magnitude;
+
+    // Порог на единичной проекции, а не на длине вектора: сюда приходит и
+    // отклонение стика от нуля до единицы, и скорость в сотнях единиц.
+    // У почти перпендикулярного движения знак определяется шумом, и без
+    // порога корпус мигал бы туда-сюда.
+    if (Math.abs(projection) > 0.25) this.facing = projection >= 0 ? 1 : -1;
+  }
+
+  private updateVisualAngle(deltaSeconds: number): void {
+    const targetAngle = Math.atan2(this.orientationUp.x, -this.orientationUp.y);
     const smoothTime = this.attached ? 0.06 : 0.16;
     const delta = wrapAngle(targetAngle - this.visualAngle);
     this.visualAngle = damp(this.visualAngle, this.visualAngle + delta, smoothTime, deltaSeconds);

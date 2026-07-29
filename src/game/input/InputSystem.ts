@@ -78,15 +78,13 @@ export class InputSystem {
   private readonly onMouseMove = (event: MouseEvent) => {
     const rect = this.canvas.getBoundingClientRect();
     this.mousePointer = {
-      x: (event.clientX - rect.left) * this.renderScale,
-      y: (event.clientY - rect.top) * this.renderScale,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     };
   };
 
   private readonly onContextMenu = (event: Event) => event.preventDefault();
   private readonly onBlur = () => this.releaseAll();
-
-  private renderScale = 1;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.touch = new TouchInputAdapter(canvas);
@@ -120,11 +118,6 @@ export class InputSystem {
     window.removeEventListener('blur', this.onBlur);
     window.removeEventListener('gamepadconnected', this.onGamepadConnected);
     window.removeEventListener('gamepaddisconnected', this.onGamepadDisconnected);
-  }
-
-  setRenderScale(scale: number): void {
-    this.renderScale = scale;
-    this.touch.setRenderScale(scale);
   }
 
   setEnabled(enabled: boolean): void {
@@ -166,7 +159,7 @@ export class InputSystem {
     this.touch.update(deltaMs);
 
     const settings = settingsRepository.current;
-    this.touch.setPreferences(settings.leftHanded, settings.fixedStick);
+    this.touch.setPreferences(settings.leftHanded, settings.fixedStick, settings.uiScale);
 
     const pad = this.readGamepad();
 
@@ -259,15 +252,31 @@ export class InputSystem {
       (pad?.pausePressed ?? false);
 
     // --- прицел ---------------------------------------------------------
-    // Приоритет из раздела 22.1: явный жест → стик → инерция движения.
+    // Приоритет: протяжка от кнопки паутины → правый стик геймпада → стик
+    // движения → инерция. Протяжка стоит первой намеренно: это единственный
+    // источник, при котором игрок целится, не переставая управлять героем.
     let aimX = 0;
     let aimY = 0;
+    let strength = 0;
     let explicit = false;
 
-    if (Math.abs(rawX) > 0.12 || Math.abs(rawY) > 0.12) {
+    const aimStick = this.touch.aimStick;
+    if (aimStick.active && aimStick.magnitude > 0) {
+      aimX = aimStick.directionX;
+      aimY = aimStick.directionY;
+      strength = aimStick.magnitude;
+      explicit = true;
+    } else if (pad && (Math.abs(pad.aimX) > 0.001 || Math.abs(pad.aimY) > 0.001)) {
+      const n = normalize({ x: pad.aimX, y: pad.aimY });
+      aimX = n.x;
+      aimY = n.y;
+      strength = Math.min(1, Math.hypot(pad.aimX, pad.aimY));
+      explicit = true;
+    } else if (Math.abs(rawX) > 0.12 || Math.abs(rawY) > 0.12) {
       const n = normalize({ x: rawX, y: rawY });
       aimX = n.x;
       aimY = n.y;
+      strength = Math.min(1, Math.hypot(rawX, rawY));
       explicit = true;
     }
 
@@ -279,6 +288,7 @@ export class InputSystem {
     frame.aimX = explicit ? aimX : this.lastAim.x;
     frame.aimY = explicit ? aimY : this.lastAim.y;
     frame.aimExplicit = explicit;
+    frame.aimStrength = explicit ? strength : 0;
 
     frame.pointerWorldX = this.mousePointer ? this.mousePointer.x : null;
     frame.pointerWorldY = this.mousePointer ? this.mousePointer.y : null;
@@ -299,9 +309,16 @@ export class InputSystem {
     return frame;
   }
 
-  /** Прицеливание активно, если кнопка удерживается дольше порога. */
+  /**
+   * Прицеливание активно, если кнопка удерживается дольше порога либо игрок
+   * уже потянул палец в сторону.
+   */
   isAiming(frame: InputFrame): boolean {
-    return frame.webHeld && frame.webHoldMs >= aimConfig.holdThresholdMs;
+    if (!frame.webHeld) return false;
+    return (
+      frame.webHoldMs >= aimConfig.holdThresholdMs ||
+      frame.aimStrength >= aimConfig.dragThreshold
+    );
   }
 
   /** Последнее известное направление прицела — для быстрого выстрела. */
@@ -327,6 +344,8 @@ export class InputSystem {
   private readGamepad(): {
     axisX: number;
     axisY: number;
+    aimX: number;
+    aimY: number;
     jump: boolean;
     jumpPressed: boolean;
     jumpReleased: boolean;
@@ -362,6 +381,10 @@ export class InputSystem {
     return {
       axisX: applyDead(pad.axes[0] ?? 0),
       axisY: applyDead(pad.axes[1] ?? 0),
+      // Правый стик целится: на геймпаде это ровно тот же принцип, что и
+      // протяжка от кнопки на сенсоре — прицел отдельно от движения.
+      aimX: applyDead(pad.axes[2] ?? 0),
+      aimY: applyDead(pad.axes[3] ?? 0),
       jump: pressed[0] ?? false,
       jumpPressed: edge(0),
       jumpReleased: release(0),

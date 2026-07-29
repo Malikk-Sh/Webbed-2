@@ -27,6 +27,8 @@ export interface GameSettings {
   quality: QualityLevel;
   frameCap: 30 | 60;
   showFps: boolean;
+  /** Живая панель состояния поверх игры — доступна без клавиатуры. */
+  showDiagnostics: boolean;
 
   slowMotionAiming: boolean;
   hintsEnabled: boolean;
@@ -57,6 +59,7 @@ export const defaultSettings: GameSettings = {
   quality: 'medium',
   frameCap: 60,
   showFps: false,
+  showDiagnostics: false,
 
   slowMotionAiming: true,
   hintsEnabled: true,
@@ -64,14 +67,29 @@ export const defaultSettings: GameSettings = {
 
 export interface PrototypeProgress {
   schemaVersion: number;
+  /**
+   * Лучшее время по кампании в целом — осталось от прототипа с одной
+   * комнатой. Экран результатов сравнивает время уже по главам, но старую
+   * запись незачем терять: она читается из хранилища у тех, кто играл раньше.
+   */
   bestTimeMs: number | null;
   completions: number;
   seenHints: string[];
+
+  /** Идентификаторы пройденных глав — по ним открывается следующая. */
+  completedChapters: string[];
+  /** Лучшее время по каждой главе, мс. */
+  chapterBestMs: Record<string, number>;
+  /** Больше всего собранных бутонов за один проход главы. */
+  chapterBlooms: Record<string, number>;
 }
 
 export const defaultProgress: PrototypeProgress = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   bestTimeMs: null,
   completions: 0,
   seenHints: [],
+  completedChapters: [],
+  chapterBestMs: {},
+  chapterBlooms: {},
 };

@@ -27,7 +27,7 @@ export class SettingsRepository {
     const cached = readRecordSync<GameSettings>('settings', 'main');
     if (cached) this.settings = this.migrate(cached);
     const cachedProgress = readRecordSync<PrototypeProgress>('progress', 'prototype');
-    if (cachedProgress) this.progress = { ...defaultProgress, ...cachedProgress };
+    if (cachedProgress) this.progress = migrateProgress(cachedProgress);
   }
 
   async load(): Promise<void> {
@@ -39,7 +39,7 @@ export class SettingsRepository {
       this.settings = this.migrate(stored);
       this.notify();
     }
-    if (progress) this.progress = { ...defaultProgress, ...progress };
+    if (progress) this.progress = migrateProgress(progress);
   }
 
   private migrate(stored: GameSettings): GameSettings {
@@ -79,12 +79,39 @@ export class SettingsRepository {
     this.scheduleSave();
   }
 
-  recordCompletion(timeMs: number): void {
+  /**
+   * Итог прохождения главы.
+   *
+   * Записывается всё сразу — отметка о прохождении, время и сбор, — потому
+   * что запись в хранилище идёт одной транзакцией, и разносить её по трём
+   * вызовам значило бы трижды писать один и тот же объект.
+   */
+  recordCompletion(chapterId: string, timeMs: number, blooms: number): void {
     this.progress.completions += 1;
     if (this.progress.bestTimeMs === null || timeMs < this.progress.bestTimeMs) {
       this.progress.bestTimeMs = timeMs;
     }
+    if (!this.progress.completedChapters.includes(chapterId)) {
+      this.progress.completedChapters.push(chapterId);
+    }
+    const best = this.progress.chapterBestMs[chapterId];
+    if (best === undefined || timeMs < best) this.progress.chapterBestMs[chapterId] = timeMs;
+    const bestBlooms = this.progress.chapterBlooms[chapterId] ?? 0;
+    if (blooms > bestBlooms) this.progress.chapterBlooms[chapterId] = blooms;
+
     void writeRecord('progress', 'prototype', this.progress);
+  }
+
+  isChapterCompleted(chapterId: string): boolean {
+    return this.progress.completedChapters.includes(chapterId);
+  }
+
+  chapterBestTime(chapterId: string): number | null {
+    return this.progress.chapterBestMs[chapterId] ?? null;
+  }
+
+  chapterBloomRecord(chapterId: string): number {
+    return this.progress.chapterBlooms[chapterId] ?? 0;
   }
 
   markHintSeen(id: string): void {
@@ -127,5 +154,25 @@ export class SettingsRepository {
 
 const clamp01 = (value: number): number =>
   Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+
+/**
+ * Приведение старой записи прогресса к текущей схеме.
+ *
+ * У сохранений прототипа не было полей кампании, а `Object.assign` с
+ * умолчаниями оставил бы `undefined` там, где лежало `null` или мусор из
+ * ручной правки хранилища. Поэтому массивы и словари восстанавливаются
+ * поимённо.
+ */
+const migrateProgress = (stored: Partial<PrototypeProgress>): PrototypeProgress => ({
+  ...defaultProgress,
+  ...stored,
+  seenHints: Array.isArray(stored.seenHints) ? [...stored.seenHints] : [],
+  completedChapters: Array.isArray(stored.completedChapters)
+    ? [...stored.completedChapters]
+    : [],
+  chapterBestMs: { ...(stored.chapterBestMs ?? {}) },
+  chapterBlooms: { ...(stored.chapterBlooms ?? {}) },
+  schemaVersion: defaultProgress.schemaVersion,
+});
 
 export const settingsRepository = new SettingsRepository();

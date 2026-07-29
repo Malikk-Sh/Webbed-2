@@ -18,6 +18,28 @@ export interface TouchButtonState {
   holdMs: number;
 }
 
+/**
+ * Протяжка от кнопки паутины — фактически второй стик.
+ *
+ * Направление выстрела раньше бралось с левого стика: большой палец левой
+ * руки одновременно вёл героя и целился, поэтому целиться на бегу было
+ * нельзя. Теперь прицел живёт на той же кнопке, которой нить и выпускается:
+ * нажал, потянул в нужную сторону, отпустил.
+ */
+export interface AimStickState {
+  active: boolean;
+  /** Центр кнопки, от которого отсчитывается протяжка. */
+  originX: number;
+  originY: number;
+  pointerX: number;
+  pointerY: number;
+  /** Единичное направление протяжки; нули, пока протяжки нет. */
+  directionX: number;
+  directionY: number;
+  /** Насколько далеко утянут палец, 0..1 от рабочего радиуса. */
+  magnitude: number;
+}
+
 export interface StickState {
   active: boolean;
   /** Центр стика в координатах полотна. */
@@ -30,6 +52,17 @@ export interface StickState {
   valueX: number;
   valueY: number;
 }
+
+const emptyAimStick = (): AimStickState => ({
+  active: false,
+  originX: 0,
+  originY: 0,
+  pointerX: 0,
+  pointerY: 0,
+  directionX: 0,
+  directionY: 0,
+  magnitude: 0,
+});
 
 const emptyButton = (): TouchButtonState => ({
   down: false,
@@ -71,6 +104,8 @@ export class TouchInputAdapter {
     valueY: 0,
   };
 
+  readonly aimStick: AimStickState = emptyAimStick();
+
   readonly buttons: Record<TouchButtonLayout['id'], TouchButtonState> = {
     jump: emptyButton(),
     web: emptyButton(),
@@ -91,7 +126,7 @@ export class TouchInputAdapter {
 
   private layout: TouchButtonLayout[] = [];
   private readonly pointerOwners = new Map<number, 'stick' | TouchButtonLayout['id']>();
-  private renderScale = 1;
+  private uiScale = 1;
   private canvasRect: DOMRect | null = null;
   private leftHanded = false;
   private fixedStick = false;
@@ -116,14 +151,10 @@ export class TouchInputAdapter {
     window.removeEventListener('pointercancel', this.onPointerUp);
   }
 
-  setRenderScale(scale: number): void {
-    this.renderScale = scale;
-    this.canvasRect = null;
-  }
-
-  setPreferences(leftHanded: boolean, fixedStick: boolean): void {
+  setPreferences(leftHanded: boolean, fixedStick: boolean, uiScale: number): void {
     this.leftHanded = leftHanded;
     this.fixedStick = fixedStick;
+    this.uiScale = uiScale;
   }
 
   setFixedStickOrigin(x: number, y: number): void {
@@ -148,6 +179,7 @@ export class TouchInputAdapter {
 
   releaseAll(): void {
     this.pointerOwners.clear();
+    this.resetAimStick();
     this.stick.active = false;
     this.stick.valueX = 0;
     this.stick.valueY = 0;
@@ -185,8 +217,8 @@ export class TouchInputAdapter {
   private toCanvas(event: PointerEvent): { x: number; y: number } {
     const rect = this.rect();
     return {
-      x: (event.clientX - rect.left) * this.renderScale,
-      y: (event.clientY - rect.top) * this.renderScale,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     };
   }
 
@@ -205,7 +237,7 @@ export class TouchInputAdapter {
   }
 
   private isStickHalf(x: number): boolean {
-    const half = (this.rect().width * this.renderScale) / 2;
+    const half = this.rect().width / 2;
     return this.leftHanded ? x > half : x < half;
   }
 
@@ -226,6 +258,17 @@ export class TouchInputAdapter {
       state.justPressed = true;
       state.holdMs = 0;
       state.pressedAt = performance.now();
+
+      if (button.id === 'web') {
+        // Отсчёт ведётся от центра кнопки, а не от точки касания: иначе
+        // направление зависело бы от того, куда именно пришёлся палец.
+        this.aimStick.active = true;
+        this.aimStick.originX = button.x;
+        this.aimStick.originY = button.y;
+        this.aimStick.pointerX = point.x;
+        this.aimStick.pointerY = point.y;
+        this.updateAimStick();
+      }
       return;
     }
 
@@ -249,13 +292,23 @@ export class TouchInputAdapter {
   private handleMove(event: PointerEvent): void {
     const owner = this.pointerOwners.get(event.pointerId);
     if (!owner) return;
-    if (owner !== 'stick') return;
 
-    const point = this.toCanvas(event);
-    this.stick.pointerX = point.x;
-    this.stick.pointerY = point.y;
-    this.updateStickValue();
-    event.preventDefault();
+    if (owner === 'stick') {
+      const point = this.toCanvas(event);
+      this.stick.pointerX = point.x;
+      this.stick.pointerY = point.y;
+      this.updateStickValue();
+      event.preventDefault();
+      return;
+    }
+
+    if (owner === 'web' && this.aimStick.active) {
+      const point = this.toCanvas(event);
+      this.aimStick.pointerX = point.x;
+      this.aimStick.pointerY = point.y;
+      this.updateAimStick();
+      event.preventDefault();
+    }
   }
 
   private handleUp(event: PointerEvent): void {
@@ -270,6 +323,8 @@ export class TouchInputAdapter {
       return;
     }
 
+    if (owner === 'web') this.resetAimStick();
+
     const state = this.buttons[owner];
     if (state.down) {
       state.down = false;
@@ -277,8 +332,39 @@ export class TouchInputAdapter {
     }
   }
 
+  private resetAimStick(): void {
+    this.aimStick.active = false;
+    this.aimStick.directionX = 0;
+    this.aimStick.directionY = 0;
+    this.aimStick.magnitude = 0;
+  }
+
+  /**
+   * Пересчёт протяжки. Направление берётся единичное, а длина отдельно: по
+   * направлению строится прицел, по длине — насколько уверенно игрок его
+   * задал. Мёртвая зона отсекает дрожание пальца, лежащего на кнопке.
+   */
+  private updateAimStick(): void {
+    const dx = this.aimStick.pointerX - this.aimStick.originX;
+    const dy = this.aimStick.pointerY - this.aimStick.originY;
+    const distance = Math.hypot(dx, dy);
+    const reach = inputConfig.aimStickReach * this.uiScale;
+    const dead = inputConfig.aimStickDeadZone * this.uiScale;
+
+    if (distance <= dead) {
+      this.aimStick.directionX = 0;
+      this.aimStick.directionY = 0;
+      this.aimStick.magnitude = 0;
+      return;
+    }
+
+    this.aimStick.directionX = dx / distance;
+    this.aimStick.directionY = dy / distance;
+    this.aimStick.magnitude = clamp01((distance - dead) / Math.max(1, reach - dead));
+  }
+
   private updateStickValue(): void {
-    const maxOffset = inputConfig.stickMaxOffset * this.renderScale;
+    const maxOffset = inputConfig.stickMaxOffset * this.uiScale;
     let dx = this.stick.pointerX - this.stick.originX;
     let dy = this.stick.pointerY - this.stick.originY;
     const dist = Math.hypot(dx, dy);

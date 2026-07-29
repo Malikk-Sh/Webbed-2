@@ -204,12 +204,19 @@ export class CollisionWorld {
   /**
    * Выталкивает точку из геометрии. Возвращает `true`, если позиция менялась.
    * Используется частицами паутины, чтобы нити не тонули в платформах.
+   *
+   * `query.distance` внутри тела отрицательна, а нормаль всегда смотрит
+   * наружу, поэтому одно вычитание годится для обоих случаев: снаружи оно
+   * добирает недостающее до радиуса, внутри — выталкивает на всю глубину и
+   * ещё на радиус сверху. Отдельная ветка для «внутри» была ошибкой: глубже
+   * радиуса она давала отрицательный сдвиг и загоняла частицу ещё дальше в
+   * камень — отсюда и нити, уходящие за границу объекта.
    */
   resolvePoint(position: Vector2, radius: number): boolean {
     const query = this.queryClosest(position, radius + 2);
     if (!query) return false;
     if (!query.inside && query.distance >= radius) return false;
-    const push = query.inside ? radius + query.distance : radius - query.distance;
+    const push = radius - query.distance;
     position.x += query.normal.x * push;
     position.y += query.normal.y * push;
     return true;

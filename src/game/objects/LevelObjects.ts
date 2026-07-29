@@ -1,10 +1,9 @@
-import Phaser from 'phaser';
 import { plateConfig } from '../../app/GameConfig';
 import { events } from '../../core/events/EventBus';
 import { clamp, damp, easeOutCubic } from '../../core/math/Interpolation';
 import type { Vector2 } from '../../core/math/Vector2';
-import { MatterLib } from '../physics/MatterLib';
-import { getVelocity } from '../physics/MatterUnits';
+import { boxBody, circleBody, type RigidBody } from '../../engine/physics/RigidBody';
+import type { PhysicsWorld } from '../../engine/physics/PhysicsWorld';
 
 export interface RigidBodySnapshot {
   x: number;
@@ -14,21 +13,32 @@ export interface RigidBodySnapshot {
 
 export interface DynamicObject {
   readonly id: string;
-  readonly body: MatterJS.BodyType;
+  readonly body: RigidBody;
   snapshot(): RigidBodySnapshot;
   restore(snapshot: RigidBodySnapshot): void;
 }
 
+const restoreBody = (body: RigidBody, snapshot: RigidBodySnapshot): void => {
+  body.setPosition(snapshot.x, snapshot.y);
+  body.setAngle(snapshot.angle);
+  body.setVelocity(0, 0);
+  body.setAngularVelocity(0);
+  body.force.x = 0;
+  body.force.y = 0;
+  body.torque = 0;
+  body.updateTransform();
+};
+
 /** Лёгкий ящик: главный инструмент решения задачи с дверью. */
 export class DynamicCrate implements DynamicObject {
-  readonly body: MatterJS.BodyType;
+  readonly body: RigidBody;
   readonly width: number;
   readonly height: number;
   private readonly initial: RigidBodySnapshot;
 
   constructor(
     readonly id: string,
-    world: Phaser.Physics.Matter.World,
+    world: PhysicsWorld,
     x: number,
     y: number,
     width: number,
@@ -37,15 +47,15 @@ export class DynamicCrate implements DynamicObject {
   ) {
     this.width = width;
     this.height = height;
-    this.body = MatterLib.Bodies.rectangle(x, y, width, height, {
-      friction: 0.45,
-      frictionAir: 0.012,
-      restitution: 0.05,
-      label: `crate:${id}`,
-      chamfer: { radius: 6 },
-    });
-    MatterLib.Body.setMass(this.body, mass);
-    MatterLib.Composite.add(world.localWorld, this.body);
+    this.body = world.add(
+      boxBody(x, y, width, height, {
+        mass,
+        friction: 0.45,
+        frictionAir: 0.012,
+        restitution: 0.05,
+        label: `crate:${id}`,
+      }),
+    );
     this.initial = { x, y, angle: 0 };
   }
 
@@ -54,16 +64,13 @@ export class DynamicCrate implements DynamicObject {
   }
 
   restore(snapshot: RigidBodySnapshot = this.initial): void {
-    MatterLib.Body.setPosition(this.body, { x: snapshot.x, y: snapshot.y });
-    MatterLib.Body.setAngle(this.body, snapshot.angle);
-    MatterLib.Body.setVelocity(this.body, { x: 0, y: 0 });
-    MatterLib.Body.setAngularVelocity(this.body, 0);
+    restoreBody(this.body, snapshot);
   }
 }
 
 /** Подвешенный груз: тяжелее ящика, изначально висит на сюжетной нити. */
 export class HangingWeight implements DynamicObject {
-  readonly body: MatterJS.BodyType;
+  readonly body: RigidBody;
   readonly radius: number;
   readonly anchor: Vector2;
   readonly restLength: number;
@@ -71,25 +78,28 @@ export class HangingWeight implements DynamicObject {
 
   constructor(
     readonly id: string,
-    world: Phaser.Physics.Matter.World,
+    world: PhysicsWorld,
     x: number,
     y: number,
     radius: number,
     mass: number,
     anchor: Vector2,
     restLength: number,
+    /** Можно ли перерезать подвес — этим комната задаёт свою головоломку. */
+    readonly cuttable = false,
   ) {
     this.radius = radius;
     this.anchor = anchor;
     this.restLength = restLength;
-    this.body = MatterLib.Bodies.circle(x, y, radius, {
-      friction: 0.5,
-      frictionAir: 0.02,
-      restitution: 0.02,
-      label: `weight:${id}`,
-    });
-    MatterLib.Body.setMass(this.body, mass);
-    MatterLib.Composite.add(world.localWorld, this.body);
+    this.body = world.add(
+      circleBody(x, y, radius, {
+        mass,
+        friction: 0.5,
+        frictionAir: 0.02,
+        restitution: 0.02,
+        label: `weight:${id}`,
+      }),
+    );
     this.initial = { x, y, angle: 0 };
   }
 
@@ -98,10 +108,7 @@ export class HangingWeight implements DynamicObject {
   }
 
   restore(snapshot: RigidBodySnapshot = this.initial): void {
-    MatterLib.Body.setPosition(this.body, { x: snapshot.x, y: snapshot.y });
-    MatterLib.Body.setAngle(this.body, snapshot.angle);
-    MatterLib.Body.setVelocity(this.body, { x: 0, y: 0 });
-    MatterLib.Body.setAngularVelocity(this.body, 0);
+    restoreBody(this.body, snapshot);
   }
 }
 
@@ -129,20 +136,19 @@ export class PressurePlate {
     readonly activationMass: number,
   ) {}
 
-  fixedUpdate(deltaSeconds: number, bodies: readonly MatterJS.BodyType[]): void {
+  fixedUpdate(deltaSeconds: number, bodies: readonly RigidBody[]): void {
     const halfWidth = this.width / 2;
     let mass = 0;
 
     for (const body of bodies) {
       if (body.isStatic) continue;
-      const bounds = body.bounds;
-      const overlapsX = bounds.max.x > this.x - halfWidth && bounds.min.x < this.x + halfWidth;
+      const aabb = body.aabb;
+      const overlapsX = aabb.maxX > this.x - halfWidth && aabb.minX < this.x + halfWidth;
       if (!overlapsX) continue;
       // Тело считается лежащим, если его низ находится у поверхности кнопки.
-      const restingY = bounds.max.y;
+      const restingY = aabb.maxY;
       if (restingY < this.surfaceY - this.height - 6 || restingY > this.surfaceY + 26) continue;
-      const velocity = getVelocity(body);
-      if (Math.abs(velocity.y) > 260) continue;
+      if (Math.abs(body.velocity.y) > 260) continue;
       mass += body.mass;
     }
 
@@ -184,6 +190,52 @@ export class PressurePlate {
   }
 }
 
+/**
+ * Шёлковый бутон — необязательный сбор.
+ *
+ * Нужен ровно затем, чтобы у украшенных закоулков появилась причина туда
+ * лезть: без цели декорации остаются фоном, мимо которого пробегают по
+ * кратчайшей траектории. Физического тела у бутона нет — он собирается по
+ * расстоянию до героини, и потому не влияет ни на решатель, ни на кнопки.
+ */
+export class SilkBloom {
+  collected = false;
+  /** 0..1 — раскрытие при сборе, для вспышки и растворения. */
+  bloom = 0;
+  readonly phase: number;
+
+  constructor(
+    readonly id: string,
+    readonly x: number,
+    readonly y: number,
+    readonly radius = 30,
+  ) {
+    // Фаза покачивания берётся из координат: одинаковые бутоны, дышащие в
+    // такт, сразу выдают, что их поставил цикл.
+    this.phase = (x * 0.013 + y * 0.021) % (Math.PI * 2);
+  }
+
+  update(deltaSeconds: number): void {
+    if (!this.collected || this.bloom >= 1) return;
+    this.bloom = Math.min(1, this.bloom + deltaSeconds * 2.6);
+  }
+
+  /** Возвращает true только в тот кадр, когда бутон действительно собран. */
+  tryCollect(position: Vector2): boolean {
+    if (this.collected) return false;
+    const dx = position.x - this.x;
+    const dy = position.y - this.y;
+    if (dx * dx + dy * dy > this.radius * this.radius) return false;
+    this.collected = true;
+    return true;
+  }
+
+  reset(): void {
+    this.collected = false;
+    this.bloom = 0;
+  }
+}
+
 export type DoorState = 'Closed' | 'Opening' | 'Open' | 'Closing';
 
 /**
@@ -196,25 +248,23 @@ export class PrototypeDoor {
   /** 0 — закрыта, 1 — полностью открыта. */
   openness = 0;
 
-  readonly body: MatterJS.BodyType;
+  readonly body: RigidBody;
 
   constructor(
     readonly id: string,
-    world: Phaser.Physics.Matter.World,
+    world: PhysicsWorld,
     readonly x: number,
     readonly y: number,
     readonly width: number,
     readonly height: number,
     readonly controlledBy: string,
   ) {
-    this.body = MatterLib.Bodies.rectangle(
-      x + width / 2,
-      y + height / 2,
-      width,
-      height,
-      { isStatic: true, label: `door:${id}` },
+    this.body = world.add(
+      boxBody(x + width / 2, y + height / 2, width, height, {
+        isStatic: true,
+        label: `door:${id}`,
+      }),
     );
-    MatterLib.Composite.add(world.localWorld, this.body);
   }
 
   fixedUpdate(deltaSeconds: number, shouldOpen: boolean): void {
@@ -235,10 +285,8 @@ export class PrototypeDoor {
 
     if (previous !== this.openness) {
       const offset = easeOutCubic(this.openness) * (this.height + 6);
-      MatterLib.Body.setPosition(this.body, {
-        x: this.x + this.width / 2,
-        y: this.y + this.height / 2 - offset,
-      });
+      this.body.setPosition(this.x + this.width / 2, this.y + this.height / 2 - offset);
+      this.body.updateTransform();
     }
   }
 
@@ -250,9 +298,7 @@ export class PrototypeDoor {
   reset(): void {
     this.openness = 0;
     this.state = 'Closed';
-    MatterLib.Body.setPosition(this.body, {
-      x: this.x + this.width / 2,
-      y: this.y + this.height / 2,
-    });
+    this.body.setPosition(this.x + this.width / 2, this.y + this.height / 2);
+    this.body.updateTransform();
   }
 }
