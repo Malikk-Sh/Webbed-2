@@ -71,6 +71,14 @@ export class PrototypeHud {
   private grainOffsetY = 0;
   private grainPattern: CanvasPattern | null = null;
 
+  /** Скорость героини и осадки комнаты — источник экранных эффектов. */
+  private motionSpeed = 0;
+  private motionX = 1;
+  private motionY = 0;
+  private rain = 0;
+  private droplets: { x: number; y: number; size: number; speed: number }[] = [];
+  private dropletSeed = 0;
+
   private layout: TouchButtonLayout[] = [];
   private readonly disposers: (() => void)[] = [];
 
@@ -177,6 +185,44 @@ export class PrototypeHud {
     this.fadeAlpha = alpha;
   }
 
+  /**
+   * Данные для экранных эффектов: как быстро и куда летит героиня и сколько
+   * в комнате осадков. Сцена знает это и так, а интерфейсу считать заново
+   * нечем — он не видит ни физики, ни темы уровня.
+   */
+  setAmbience(speed: number, directionX: number, directionY: number, rain: number): void {
+    this.motionSpeed = speed;
+    if (speed > 1) {
+      this.motionX = directionX;
+      this.motionY = directionY;
+    }
+    if (rain !== this.rain) {
+      this.rain = rain;
+      this.buildDroplets();
+    }
+  }
+
+  /**
+   * Капли на «объективе».
+   *
+   * Ставятся один раз на комнату и живут своими дорожками: пересоздавать их
+   * каждый кадр значило бы получить мерцающую сыпь вместо стекающей воды.
+   */
+  private buildDroplets(): void {
+    this.droplets = [];
+    if (this.rain < 1.2) return;
+    for (let i = 0; i < 18; i++) {
+      this.dropletSeed = (this.dropletSeed * 1103515245 + 12345) & 0x7fffffff;
+      const r = this.dropletSeed / 0x7fffffff;
+      this.droplets.push({
+        x: r,
+        y: ((i * 0.618) % 1),
+        size: 1.6 + ((i * 7) % 5) * 0.7,
+        speed: 0.012 + ((i * 13) % 7) * 0.006,
+      });
+    }
+  }
+
   private get dp(): number {
     return this.uiScale;
   }
@@ -257,6 +303,16 @@ export class PrototypeHud {
     }
     if (this.titleTimer > 0) this.titleTimer -= deltaSeconds;
     if (this.bloomTimer > 0) this.bloomTimer -= deltaSeconds;
+
+    for (const drop of this.droplets) {
+      // Капля сползает тем быстрее, чем крупнее — мелкие подолгу висят.
+      drop.y += drop.speed * deltaSeconds * (0.4 + drop.size * 0.3);
+      if (drop.y > 1.1) {
+        drop.y = -0.1;
+        this.dropletSeed = (this.dropletSeed * 1103515245 + 12345) & 0x7fffffff;
+        drop.x = this.dropletSeed / 0x7fffffff;
+      }
+    }
   }
 
   // ------------------------------------------------------------- отрисовка
@@ -286,6 +342,9 @@ export class PrototypeHud {
     painter.setAlpha(0.85);
     painter.drawTextureRect(vignette.canvas, 0, 0, this.width, this.height);
     painter.setAlpha(1);
+
+    this.drawSpeedStreaks(painter);
+    this.drawDroplets(painter);
 
     if (!this.grainPattern) {
       this.grainPattern = painter.ctx.createPattern(textures.get(TEXTURES.grain).canvas, 'repeat');
@@ -728,6 +787,66 @@ export class PrototypeHud {
 
     if (settingsRepository.current.showDiagnostics && this.diagnostics) {
       this.drawDiagnostics(painter, this.diagnostics());
+    }
+  }
+
+  /**
+   * Штрихи скорости у кромок кадра.
+   *
+   * Появляются только на быстром полёте и только по краям: в середине они
+   * закрывали бы саму героиню, а по краям дают ровно то ощущение разгона,
+   * которого не хватает на длинной дуге.
+   */
+  private drawSpeedStreaks(painter: Painter): void {
+    const threshold = 430;
+    if (this.motionSpeed < threshold) return;
+    const intensity = clamp01((this.motionSpeed - threshold) / 420);
+    if (intensity < 0.02) return;
+
+    const cx = this.width / 2;
+    const cy = this.height / 2;
+    const reach = Math.hypot(cx, cy);
+
+    painter.setBlendMode('add');
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2 + this.hintPhase * 0.05;
+      // Штрих ложится по направлению движения, а не по радиусу: смазывается
+      // то, что действительно проносится мимо.
+      const startR = reach * (0.62 + ((i * 7) % 5) * 0.06);
+      const sx = cx + Math.cos(angle) * startR;
+      const sy = cy + Math.sin(angle) * startR * 0.7;
+      const len = 30 + intensity * 90 + ((i * 11) % 4) * 12;
+
+      painter.lineStyle(1.4, PALETTE.uiSilk, 0.05 + intensity * 0.14);
+      painter.beginPath();
+      painter.moveTo(sx, sy);
+      painter.lineTo(sx - this.motionX * len, sy - this.motionY * len);
+      painter.strokePath();
+    }
+    painter.setBlendMode('normal');
+  }
+
+  /** Капли воды на «объективе» — только в комнатах с сильными осадками. */
+  private drawDroplets(painter: Painter): void {
+    if (this.droplets.length === 0) return;
+    const dp = this.dp;
+
+    for (const drop of this.droplets) {
+      const x = drop.x * this.width;
+      const y = drop.y * this.height;
+      const r = drop.size * dp;
+
+      painter.fillStyle(0x9fd8f0, 0.12);
+      painter.fillEllipse(x, y, r * 2.2, r * 3);
+      // Блик на верхнем краю: без него капля читается как грязь на стекле.
+      painter.fillStyle(0xe8f8ff, 0.3);
+      painter.fillEllipse(x - r * 0.3, y - r * 0.7, r * 0.8, r * 0.9);
+      // Хвост стекающей воды.
+      painter.lineStyle(r * 0.5, 0x9fd8f0, 0.07);
+      painter.beginPath();
+      painter.moveTo(x, y);
+      painter.lineTo(x, y - r * 5);
+      painter.strokePath();
     }
   }
 

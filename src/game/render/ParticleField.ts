@@ -81,6 +81,35 @@ export class ParticleField {
     }
   }
 
+  /**
+   * Пылинка из-под лапы на ходу.
+   *
+   * Одна-две частицы на шаг, а не всплеск: постоянное движение должно
+   * оставлять след, но не превращаться в дымовую завесу под ногами.
+   */
+  puffStep(position: Vector2, normal: Vector2, speed: number): void {
+    const count = speed > 200 ? 2 : 1;
+    const tangent = { x: -normal.y, y: normal.x };
+    for (let i = 0; i < count; i++) {
+      const side = Math.random() > 0.5 ? 1 : -1;
+      this.spawn({
+        x: position.x + tangent.x * side * (4 + Math.random() * 10) + normal.x * 12,
+        y: position.y + tangent.y * side * (4 + Math.random() * 10) + normal.y * 12,
+        vx: -tangent.x * side * (10 + Math.random() * 40) + normal.x * 30,
+        vy: -tangent.y * side * (10 + Math.random() * 40) + normal.y * 30,
+        maxLife: 0.26 + Math.random() * 0.3,
+        size: 1 + Math.random() * 1.8,
+        color: PALETTE.stoneEdge,
+        gravity: 260,
+        drag: 3.4,
+        additive: false,
+        spin: 0,
+        angle: 0,
+        shape: 'dot',
+      });
+    }
+  }
+
   /** Всплеск шёлка при разрыве нити. */
   burstSilk(position: Vector2, strength = 1): void {
     const count = Math.round(10 + strength * 14);

@@ -156,9 +156,9 @@
       "id": "pillar",
       "type": "rectangle",
       "x": 2950,
-      "y": 1170,
+      "y": 1245,
       "width": 80,
-      "height": 480,
+      "height": 405,
       "material": "stone"
     }
   ],

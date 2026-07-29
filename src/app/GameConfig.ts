@@ -160,16 +160,42 @@ export const webConfig = {
 } as const;
 
 export const tetherConfig = {
-  reelInSpeed: 180,
-  reelOutSpeed: 230,
+  reelInSpeed: 240,
+  reelOutSpeed: 300,
   minimumLength: 36,
   maximumLength: 720,
-  swingAssistAcceleration: 240,
+  swingAssistAcceleration: 300,
+  /**
+   * Надбавка к помощи, когда стик совпадает с направлением движения по дуге.
+   * Раскачка вознаграждает попадание в такт, как на настоящих качелях, а не
+   * простое удержание стика в сторону.
+   */
+  swingPumpBonus: 0.6,
   detachReattachCooldownMs: 80,
   /** Доля скорости, гасимая при натяжении троса. 0 — идеально упругий маятник. */
   ropeAbsorption: 0.06,
-  /** Небольшой импульс при осознанном отпускании нити. */
-  releaseBoost: 90,
+
+  /**
+   * Отпускание нити прыжком.
+   *
+   * Прежний постоянный толчок в 90 единиц терялся на фоне скорости дуги в
+   * четыре-пять сотен, и отрыв на полном ходу ощущался торможением. Теперь
+   * надбавка вдоль движения считается долей от набранной скорости, а вверх
+   * добавляется фиксированный подъём — дуга превращается в бросок.
+   */
+  releaseGain: 0.2,
+  releaseGainMax: 160,
+  releaseLift: 300,
+
+  /**
+   * Раскрутка при подтягивании.
+   *
+   * Момент импульса сохраняется: чем короче радиус, тем быстрее движение по
+   * дуге. Показатель меньше единицы намеренно — полный закон даёт слишком
+   * резкий разгон и рвёт нить о собственное натяжение.
+   */
+  reelSpinExponent: 0.55,
+  reelSpinMaxSpeed: 900,
 } as const;
 
 export const aimConfig = {
@@ -195,16 +221,28 @@ export interface CameraConfig {
   zoomSmoothTimeMs: number;
   maximumVelocityLead: number;
   maximumAimLead: number;
+  leadSmoothTimeMs: number;
 }
 
 export const cameraConfig: CameraConfig = {
   baseZoom: 1,
-  minimumZoom: 0.82,
-  maximumZoom: 1.08,
-  positionSmoothTimeMs: 160,
-  zoomSmoothTimeMs: 220,
-  maximumVelocityLead: 140,
-  maximumAimLead: 180,
+  // Разброс масштаба сужен, а сглаживание удлинено: на дуге скорость
+  // колеблется каждый взмах, и прежние значения заставляли кадр «дышать».
+  minimumZoom: 0.88,
+  maximumZoom: 1.04,
+  positionSmoothTimeMs: 210,
+  zoomSmoothTimeMs: 460,
+  maximumVelocityLead: 120,
+  maximumAimLead: 130,
+  /**
+   * Сглаживание самого упреждения.
+   *
+   * Раньше упреждение входило в цель мгновенно: стоило начать прицеливание
+   * или сменить направление, как цель прыгала на полторы сотни единиц, и
+   * камера дёргалась вдогонку. Теперь сначала плавно едет упреждение, и уже
+   * за ним — камера.
+   */
+  leadSmoothTimeMs: 340,
 };
 
 export const inputConfig = {

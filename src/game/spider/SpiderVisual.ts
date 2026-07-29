@@ -32,6 +32,9 @@ interface Leg {
 
 const LEGS_PER_SIDE = 4;
 
+/** Насколько далеко вниз ищется поверхность для тени в полёте. */
+const SHADOW_CAST_RANGE = 520;
+
 /**
  * Процедурная отрисовка Люмы.
  *
@@ -57,6 +60,8 @@ export class SpiderVisual {
   private mood: SpiderMood = 'calm';
   private moodEnergy = 0;
   private legDetail = 8;
+  /** Была ли героиня на поверхности в прошлом кадре — ловит момент касания. */
+  private wasAttached = false;
   /** Плавный разворот корпуса влево-вправо: −1 … +1. */
   private facingBlend = 1;
 
@@ -192,6 +197,33 @@ export class SpiderVisual {
         angle,
         0.45,
       );
+    } else {
+      // В воздухе тень падает вниз на первую же поверхность под героиней.
+      // Без неё в полёте и на дуге маятника нечем измерить высоту: силуэт
+      // висит в пустоте, и до земли на глаз может быть и сто единиц, и
+      // тысяча.
+      const drop = this.collision.raycast(position, {
+        x: position.x,
+        y: position.y + SHADOW_CAST_RANGE,
+      });
+      if (drop) {
+        const fall = Math.max(0, drop.point.y - position.y);
+        const closeness = 1 - fall / SHADOW_CAST_RANGE;
+        const shadow = textures.tint(TEXTURES.glowSoft, 0x141d26);
+        painter.setBlendMode('multiply');
+        painter.drawTexture(
+          shadow.canvas,
+          drop.point.x,
+          drop.point.y,
+          shadow.width * (0.2 + (1 - closeness) * 0.22),
+          shadow.height * (0.09 + (1 - closeness) * 0.05),
+          0,
+          // Затухание линейное, а не квадратичное: на тёмном полу тень в
+          // режиме умножения и без того еле различима, и квадрат гасил её
+          // задолго до того, как она переставала быть нужной.
+          0.5 * closeness,
+        );
+      }
     }
 
     const halo = textures.tint(TEXTURES.glowSoft, PALETTE.spiderEyeGlow);
@@ -235,13 +267,32 @@ export class SpiderVisual {
   ): void {
     const attached = this.controller.attached;
     if (!attached) {
+      this.wasAttached = false;
       this.tuckLegs(deltaSeconds, toWorld);
       return;
     }
 
+    // Касание после полёта: лапы поджаты у тела, а опора уже под ними. Без
+    // отдельной обработки четыре ноги уходят в шаг, а остальные просто
+    // подтягиваются по прямой — получается рывок, который и видно при
+    // приземлении с прыжка. Здесь все восемь начинают шаг разом, но двумя
+    // группами со сдвигом: лапы ставятся по дуге и вразнобой, как при
+    // настоящем приземлении.
+    if (!this.wasAttached) {
+      for (const leg of this.legs) {
+        if (!leg.initialised) continue;
+        leg.stepping = true;
+        leg.stepProgress = leg.group === 0 ? 0 : -0.45;
+        leg.stepFrom.x = leg.foot.x;
+        leg.stepFrom.y = leg.foot.y;
+      }
+    }
+    this.wasAttached = true;
+
     const stepDuration = clamp(0.19 - speed / 4200, 0.07, 0.19);
     let steppingCount = 0;
     for (const leg of this.legs) if (leg.stepping) steppingCount++;
+
 
     for (const leg of this.legs) {
       const maxReach = (leg.femur + leg.tibia) * 0.94;
@@ -291,7 +342,9 @@ export class SpiderVisual {
           leg.stepFrom.y = leg.foot.y;
           steppingCount++;
         } else if (error > 0.5) {
-          const follow = Math.min(1, deltaSeconds * 14);
+          // Затухание за время, а не за кадр: при просадке частоты стопа
+          // догоняет цель ровно так же, как при полных 60 кадрах.
+          const follow = 1 - Math.exp(-14 * deltaSeconds);
           leg.foot.x += dx * follow;
           leg.foot.y += dy * follow;
         }
@@ -302,19 +355,25 @@ export class SpiderVisual {
         leg.stepTo.x = desiredWorld.x;
         leg.stepTo.y = desiredWorld.y;
 
-        const t = easeOutCubic(leg.stepProgress);
-        const dx = leg.stepTo.x - leg.stepFrom.x;
-        const dy = leg.stepTo.y - leg.stepFrom.y;
-        const len = Math.hypot(dx, dy) || 1;
-        // Подъём по дуге: нога переносится над поверхностью, а не скользит.
-        const lift = Math.sin(Math.PI * leg.stepProgress) * 8;
-        leg.foot.x = leg.stepFrom.x + dx * t - (dy / len) * lift;
-        leg.foot.y = leg.stepFrom.y + dy * t + (dx / len) * lift;
+        // Отрицательный прогресс — пауза перед переносом: так вторая группа
+        // ног при приземлении трогается позже первой. Выходить отсюда по
+        // `continue` нельзя: ниже стоит ограничение вылета, и без него
+        // отставшая стопа рисуется через полэкрана.
+        if (leg.stepProgress >= 0) {
+          const t = easeOutCubic(leg.stepProgress);
+          const dx = leg.stepTo.x - leg.stepFrom.x;
+          const dy = leg.stepTo.y - leg.stepFrom.y;
+          const len = Math.hypot(dx, dy) || 1;
+          // Подъём по дуге: нога переносится над поверхностью, а не скользит.
+          const lift = Math.sin(Math.PI * leg.stepProgress) * 8;
+          leg.foot.x = leg.stepFrom.x + dx * t - (dy / len) * lift;
+          leg.foot.y = leg.stepFrom.y + dy * t + (dx / len) * lift;
 
-        if (leg.stepProgress >= 1) {
-          leg.stepping = false;
-          leg.foot.x = leg.stepTo.x;
-          leg.foot.y = leg.stepTo.y;
+          if (leg.stepProgress >= 1) {
+            leg.stepping = false;
+            leg.foot.x = leg.stepTo.x;
+            leg.foot.y = leg.stepTo.y;
+          }
         }
       }
 

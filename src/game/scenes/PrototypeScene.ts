@@ -20,6 +20,7 @@ import { audio } from '../audio/AudioEngine';
 import { CameraController } from '../camera/CameraController';
 import type { InputSystem } from '../input/InputSystem';
 import type { LevelDefinition } from '../level/LevelSchema';
+import { getTheme } from '../level/LevelTheme';
 import { loadLevel, type LoadedLevel } from '../level/PrototypeLevelLoader';
 import type { RigidBodySnapshot } from '../objects/LevelObjects';
 import { BackgroundRenderer } from '../render/BackgroundRenderer';
@@ -223,7 +224,13 @@ export class PrototypeScene {
         audio.playJump();
       }),
 
-      events.on('spider:step', ({ speed }) => audio.playStep(speed)),
+      events.on('spider:step', ({ position, speed }) => {
+        audio.playStep(speed);
+        // Пыль из-под лапы: без неё быстрый бег читается как скольжение
+        // силуэта по поверхности, а не как шаги по ней.
+        const normal = this.spider.contact?.normal;
+        if (normal && speed > 60) this.particles.puffStep(position, normal, speed);
+      }),
 
       events.on('web:created', ({ playerCreated, position }) => {
         if (!playerCreated) return;
@@ -791,6 +798,14 @@ export class PrototypeScene {
 
     // --- экранный слой -----------------------------------------------------
     this.surface.resetTransform();
+    const velocity = this.spider.velocity;
+    const speed = length(velocity);
+    this.hud.setAmbience(
+      speed,
+      speed > 1 ? velocity.x / speed : 1,
+      speed > 1 ? velocity.y / speed : 0,
+      getTheme(this.level.definition.theme).rain,
+    );
     this.hud.update(deltaSeconds);
     this.hud.draw(painter);
     this.debugOverlay.drawScreen(painter);
@@ -902,6 +917,29 @@ export class PrototypeScene {
 
   get webForTest(): WebSystem {
     return this.web;
+  }
+
+  /** Центр и масштаб камеры — по ним измеряется плавность хода. */
+  get cameraStateForTest(): { x: number; y: number; zoom: number } {
+    return { x: this.camera.centerX, y: this.camera.centerY, zoom: this.camera.zoom };
+  }
+
+  /** Состояние раскачивания: длина нити, скорость, натяжение. */
+  get tetherStateForTest(): {
+    tethered: boolean;
+    length: number;
+    speed: number;
+    x: number;
+    y: number;
+  } {
+    const velocity = this.spider.velocity;
+    return {
+      tethered: this.webController.isTethered,
+      length: +this.webController.tetherLength.toFixed(1),
+      speed: +length(velocity).toFixed(1),
+      x: +this.spider.position.x.toFixed(1),
+      y: +this.spider.position.y.toFixed(1),
+    };
   }
 
   cameraSnapForTest(position: Vector2): void {
